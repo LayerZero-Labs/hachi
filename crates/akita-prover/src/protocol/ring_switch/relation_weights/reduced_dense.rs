@@ -160,47 +160,61 @@ struct ReducedEtSink<'a, E> {
 }
 
 impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
-    fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
+    fn add_e(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError> {
         let kernel = self
             .challenge_kernels
-            .get(address.challenge_index)
+            .get(challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let kernel_start = address.role_subcolumn * self.plan.roles.d_d;
+        let kernel_start = role_subcolumn * self.plan.roles.d_d;
         add_scaled_kernel(
             self.dense,
-            address.physical_start,
+            physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_d)
                 .ok_or(AkitaError::InvalidProof)?,
-            address.constraint_scale,
+            constraint_scale,
         )?;
         add_scaled_kernel(
             self.dense,
-            address.physical_start,
-            self.d_setup_kernels.get(0, address.setup_column)?,
+            physical_start,
+            self.d_setup_kernels.get(0, setup_column)?,
             E::one(),
         )
     }
 
-    fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError> {
+    fn add_t(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        slice_index: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError> {
         let kernel = self
             .challenge_kernels
-            .get(address.challenge_index)
+            .get(challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let kernel_start = address.role_subcolumn * self.plan.roles.d_b;
+        let kernel_start = role_subcolumn * self.plan.roles.d_b;
         add_scaled_kernel(
             self.dense,
-            address.physical_start,
+            physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_b)
                 .ok_or(AkitaError::InvalidProof)?,
-            address.constraint_scale,
+            constraint_scale,
         )?;
         add_scaled_kernel(
             self.dense,
-            address.physical_start,
-            self.b_setup_kernels
-                .get(address.slice_index, address.setup_column)?,
+            physical_start,
+            self.b_setup_kernels.get(slice_index, setup_column)?,
             E::one(),
         )
     }
@@ -217,18 +231,21 @@ where
     F: Field,
     E: Field + ExtField<F>,
 {
-    fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
-        self.opening_kernels.add_scaled(
-            self.dense,
-            address.physical_start,
-            address.position,
-            address.constraint_scale,
-        )?;
+    fn add_z(
+        &mut self,
+        physical_start: usize,
+        position: usize,
+        setup_column: usize,
+        constraint_scale: E,
+        setup_scale: E,
+    ) -> Result<(), AkitaError> {
+        self.opening_kernels
+            .add_scaled(self.dense, physical_start, position, constraint_scale)?;
         add_scaled_kernel(
             self.dense,
-            address.physical_start,
-            self.a_setup_kernels.get(0, address.setup_column)?,
-            address.setup_scale,
+            physical_start,
+            self.a_setup_kernels.get(0, setup_column)?,
+            setup_scale,
         )
     }
 }

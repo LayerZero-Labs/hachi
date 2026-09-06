@@ -21,8 +21,8 @@ use akita_types::{
 };
 pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
 use compiler::{
-    compile_group_et_addresses, compile_group_z_addresses, EAddress, EtWeightSink,
-    RelationWeightCompilation, TAddress, ZAddress, ZWeightSink,
+    compile_group_et_addresses, compile_group_z_addresses, EtWeightSink, RelationWeightCompilation,
+    ZWeightSink,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{
@@ -153,50 +153,65 @@ struct LiftedEtSink<'a, E: Field> {
 }
 
 impl<E: Field> EtWeightSink<E> for LiftedEtSink<'_, E> {
-    fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
+    fn add_e(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError> {
         if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
             self.events.push(
-                address.physical_start,
+                physical_start,
                 self.plan.roles.d_d,
-                address.role_subcolumn * self.plan.roles.d_d,
+                role_subcolumn * self.plan.roles.d_d,
                 self.challenge_evaluations
-                    .get(address.challenge_index)
+                    .get(challenge_index)
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?
-                    * address.constraint_scale,
+                    * constraint_scale,
                 RelationWeightContribution::Constraint,
             )?;
         }
         if let LiftedEtSetup::Matrix { d, .. } = self.setup {
             self.events.push(
-                address.physical_start,
+                physical_start,
                 self.plan.roles.d_d,
                 0,
-                d.get_scalar(0, address.setup_column)?,
+                d.get_scalar(0, setup_column)?,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
         Ok(())
     }
 
-    fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError> {
+    fn add_t(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        slice_index: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError> {
         self.events.push(
-            address.physical_start,
+            physical_start,
             self.plan.roles.d_b,
-            address.role_subcolumn * self.plan.roles.d_b,
+            role_subcolumn * self.plan.roles.d_b,
             self.challenge_evaluations
-                .get(address.challenge_index)
+                .get(challenge_index)
                 .copied()
                 .ok_or(AkitaError::InvalidProof)?
-                * address.constraint_scale,
+                * constraint_scale,
             RelationWeightContribution::Constraint,
         )?;
         if let LiftedEtSetup::Matrix { b, .. } = self.setup {
             self.events.push(
-                address.physical_start,
+                physical_start,
                 self.plan.roles.d_b,
                 0,
-                b.get_scalar(address.slice_index, address.setup_column)?,
+                b.get_scalar(slice_index, setup_column)?,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
@@ -218,24 +233,31 @@ struct LiftedZSink<'a, E: Field> {
 }
 
 impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, E> {
-    fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
+    fn add_z(
+        &mut self,
+        physical_start: usize,
+        position: usize,
+        setup_column: usize,
+        constraint_scale: E,
+        setup_scale: E,
+    ) -> Result<(), AkitaError> {
         if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
             self.events.push_native_ring(
-                address.physical_start,
+                physical_start,
                 self.plan.roles.d_a,
                 self.opening_evaluations
-                    .get(address.position)
+                    .get(position)
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?
-                    * address.constraint_scale,
+                    * constraint_scale,
                 RelationWeightContribution::Constraint,
             )?;
         }
         if let LiftedZSetup::Matrix(setup) = self.setup {
             self.events.push_native_ring(
-                address.physical_start,
+                physical_start,
                 self.plan.roles.d_a,
-                setup.get_scalar(0, address.setup_column)? * address.setup_scale,
+                setup.get_scalar(0, setup_column)? * setup_scale,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
