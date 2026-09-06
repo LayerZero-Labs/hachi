@@ -77,3 +77,7 @@ parallel = [
 
 [lints]
 workspace = true
+
+[[example]]
+name = "dense_decompose_probe"
+required-features = ["parallel"]
