@@ -45,9 +45,11 @@ where
         for row in &slot.commitment.rows {
             coeffs.extend_from_slice(row.coeffs());
         }
-        group_payloads.push(RingVec::from_coeffs(coeffs));
+        group_payloads.push(Some(RingVec::from_coeffs(coeffs)));
     }
-    group_payloads.push(RingVec::from_coeffs(witness_commitment.coeffs().to_vec()));
+    group_payloads.push(Some(RingVec::from_coeffs(
+        witness_commitment.coeffs().to_vec(),
+    )));
     if group_payloads.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidProof);
     }
@@ -60,7 +62,8 @@ where
         opening_batch.root_group_order()?.into_iter().enumerate()
     {
         let payload = group_payloads
-            .get(group_index)
+            .get_mut(group_index)
+            .and_then(Option::take)
             .ok_or(AkitaError::InvalidProof)?;
         if payload.coeff_len()
             != relation_layout
@@ -69,7 +72,7 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
-        ordered.push(payload.clone());
+        ordered.push(payload);
     }
     Ok(ordered)
 }

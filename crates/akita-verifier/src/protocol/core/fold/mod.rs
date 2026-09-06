@@ -240,7 +240,7 @@ where
                 let mut batching = Vec::with_capacity(evaluations.len());
                 let mut power = E::one();
                 let mut claim = E::zero();
-                for evaluation in evaluations {
+                for &evaluation in evaluations {
                     batching.push(power);
                     claim += evaluation * power;
                     power *= eta;
@@ -381,7 +381,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    let opening_shape = prepared.opening_shape.clone();
+    let opening_shape = prepared.opening_shape;
     let num_groups = opening_shape.num_groups();
     let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
@@ -496,18 +496,19 @@ where
                 _ => Err(AkitaError::InvalidProof),
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let opening_payload = if prepared.lp.payload_mode.is_compressed() {
+            RingVec::from_coeffs(Vec::new())
+        } else {
+            prepared.opening_payload
+        };
         let relation_instance = RingRelationInstance::new(
             group_openings,
             E::DEGREE,
-            opening_shape.clone(),
+            opening_shape,
             gamma,
             row_coefficient_rings,
             relation_rhs,
-            if prepared.lp.payload_mode.is_compressed() {
-                RingVec::from_coeffs(Vec::new())
-            } else {
-                prepared.opening_payload.clone()
-            },
+            opening_payload,
             role_dims,
         )
         .map_err(|error| {

@@ -15,9 +15,9 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
-pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
+pub(crate) struct PhysicalL2VerifierReplay<'a, E: Field> {
     pub(crate) point: Vec<E>,
-    pub(crate) virtual_evaluations: Vec<E>,
+    pub(crate) virtual_evaluations: &'a [E],
 }
 
 pub(crate) struct PhysicalL2RangeClaim<'a, E> {
@@ -213,15 +213,15 @@ where
     Ok(())
 }
 
-pub(crate) fn verify_physical_l2_norm<F, E, T>(
+pub(crate) fn verify_physical_l2_norm<'a, F, E, T>(
     plan: &PhysicalResponsePlan,
-    proof: &PhysicalL2NormProof<E>,
+    proof: &'a PhysicalL2NormProof<E>,
     range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
     transcript: &mut T,
     level: u32,
-) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
+) -> Result<PhysicalL2VerifierReplay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
@@ -284,7 +284,7 @@ where
     }
     Ok(PhysicalL2VerifierReplay {
         point,
-        virtual_evaluations: proof.virtual_evaluations.clone(),
+        virtual_evaluations: &proof.virtual_evaluations,
     })
 }
 
