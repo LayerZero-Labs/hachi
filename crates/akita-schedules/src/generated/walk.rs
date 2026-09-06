@@ -288,19 +288,21 @@ pub(crate) fn walk_generated_schedule_entry(
         response_shape: witness_shape,
         estimated_payload_bytes: terminal_bytes,
     };
-    let nonce_bits = crate::runtime::candidate_grinding_nonce_bits(
+    let grinding_cost = crate::runtime::candidate_grinding_cost(
         policy,
         &key.opening_layout()?,
         &folds,
         &terminal_response,
     )?;
-    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits, 8)
+    let nonce_bytes = akita_error::checked::div_ceil(grinding_cost.total_nonce_bits, 8)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     total_bytes = total_bytes
         .checked_add(nonce_bytes)
         .ok_or_else(|| AkitaError::InvalidSetup("generated proof byte total overflow".into()))?;
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
+        grinding_cost.total_nonce_bits,
+        grinding_cost.expanded_query_count,
         setup_field_elements,
         None,
         policy,
