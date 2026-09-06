@@ -238,9 +238,6 @@ fn validate_complete_phase_counts() {
     };
     for mode in TimedRelationMode::ALL {
         let complete = calls(mode, TimedRelationPhase::CompleteStage2);
-        if complete == 0 {
-            continue;
-        }
         for phase in [
             TimedRelationPhase::CoefficientFunctionalPreparation,
             TimedRelationPhase::StructuredGroups,
@@ -337,4 +334,33 @@ pub(crate) fn measure_complete_stage2(iterations: u64, mut operation: impl FnMut
         .map(|measurement| measurement.elapsed_nanos)
         .sum();
     Duration::from_nanos(nanos)
+}
+
+#[cfg(test)]
+#[allow(unused_imports)] // Bench targets set `test = false`; the integration harness uses these.
+mod tests {
+    use super::{
+        reset, validate_complete_phase_counts, TimedRelationMode, TimedRelationPhase, CALLS,
+    };
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    #[should_panic(expected = "reduced coefficient_functional_preparation calls must match")]
+    fn rejects_orphan_subphase_for_mode_without_complete_stage2() {
+        reset();
+        CALLS[TimedRelationMode::Quotient.index()][TimedRelationPhase::CompleteStage2.index()]
+            .store(1, Ordering::Relaxed);
+        CALLS[TimedRelationMode::Quotient.index()]
+            [TimedRelationPhase::CoefficientFunctionalPreparation.index()]
+        .store(1, Ordering::Relaxed);
+        CALLS[TimedRelationMode::Quotient.index()][TimedRelationPhase::StructuredGroups.index()]
+            .store(1, Ordering::Relaxed);
+        CALLS[TimedRelationMode::Quotient.index()][TimedRelationPhase::QuotientTail.index()]
+            .store(1, Ordering::Relaxed);
+        CALLS[TimedRelationMode::Reduced.index()]
+            [TimedRelationPhase::CoefficientFunctionalPreparation.index()]
+        .store(1, Ordering::Relaxed);
+
+        validate_complete_phase_counts();
+    }
 }
