@@ -35,7 +35,7 @@ use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
 use common::*;
-pub(crate) use compression::validate_compression_batch_shape;
+pub(crate) use compression::{mat_vec_mul_ntt_compression_i8, validate_compression_batch_shape};
 #[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
 #[cfg(test)]
