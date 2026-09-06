@@ -274,7 +274,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
     let policy = policy_of::<OneHot>();
 
     let adapted = find_adapted_schedule(
-        &main_row,
+        main_row,
         &request,
         honest_fold_policy_of::<OneHot>(),
         &policy,
@@ -326,7 +326,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
     let policy = policy_of::<RecursiveOneHot>();
 
     let adapted = find_adapted_schedule(
-        &main_row,
+        main_row,
         &request,
         honest_fold_policy_of::<RecursiveOneHot>(),
         &policy,
@@ -437,7 +437,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
         let request = crate::emit::GroupedGenerationRequest::new(main_group, producers);
         let started = std::time::Instant::now();
         let result = find_adapted_schedule(
-            &main_row,
+            main_row,
             &request,
             honest_fold_policy_of::<OneHot>(),
             &policy,
