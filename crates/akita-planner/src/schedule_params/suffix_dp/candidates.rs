@@ -65,7 +65,6 @@ pub(super) struct RawFoldCandidate {
     pub(super) params: CommittedGroupParams,
     pub(super) next_witness_len: usize,
     pub(super) opening_reduction_bytes: usize,
-    pub(super) relation_transition: super::RelationTransition,
 }
 
 pub(super) struct GeneratedCandidates {
@@ -714,10 +713,15 @@ impl<'a> CandidateDomain<'a> {
                     }
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?
+                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                         .filtered(ctx.relation_mode_filter)?;
                     let relation_transition = relation_domain.only_transition()?;
                     for (params, next_witness_len) in dimension_candidates {
+                        if params.ring_relation_mode != relation_transition {
+                            return Err(AkitaError::InvalidSetup(
+                                "materialized mode disagrees with relation domain".into(),
+                            ));
+                        }
                         if (!self.adaptation_guided || self.guide_terminal.is_some())
                             && work.purpose.allows_terminal()
                         {
@@ -730,7 +734,6 @@ impl<'a> CandidateDomain<'a> {
                             && work.purpose.allows_fold()
                         {
                             folds.push(RawFoldCandidate {
-                                relation_transition,
                                 params,
                                 next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
@@ -781,7 +784,7 @@ impl<'a> CandidateDomain<'a> {
                     };
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?
+                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                         .filtered(ctx.relation_mode_filter)?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
@@ -800,7 +803,7 @@ impl<'a> CandidateDomain<'a> {
                             })
                         }));
                         for (candidate, next_witness_len) in views.folds {
-                            if !relation_domain.admits(candidate.relation_transition) {
+                            if !relation_domain.admits(candidate.ring_relation_mode) {
                                 return Err(AkitaError::InvalidSetup(
                                     "combined recursive view emitted a fold outside its relation domain"
                                         .into(),
@@ -808,14 +811,13 @@ impl<'a> CandidateDomain<'a> {
                             }
                             if self.adaptation_guided
                                 && !self.guide_fold.is_some_and(|guide| {
-                                    recursive_candidate_matches_guide(&candidate.params, guide)
+                                    recursive_candidate_matches_guide(&candidate, guide)
                                 })
                             {
                                 continue;
                             }
                             folds.push(RawFoldCandidate {
-                                relation_transition: candidate.relation_transition,
-                                params: candidate.params,
+                                params: candidate,
                                 next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             });
@@ -853,14 +855,13 @@ impl<'a> CandidateDomain<'a> {
                     for (candidate, next_witness_len) in level_candidates {
                         if self.adaptation_guided
                             && !self.guide_fold.is_some_and(|guide| {
-                                recursive_candidate_matches_guide(&candidate.params, guide)
+                                recursive_candidate_matches_guide(&candidate, guide)
                             })
                         {
                             continue;
                         }
                         folds.push(RawFoldCandidate {
-                            relation_transition: candidate.relation_transition,
-                            params: candidate.params,
+                            params: candidate,
                             next_witness_len,
                             opening_reduction_bytes: work.opening_reduction_bytes,
                         });
@@ -910,12 +911,17 @@ impl<'a> CandidateDomain<'a> {
                 }
                 let relation_transition = state
                     .topology
-                    .relation_domain(state.level, work.opening.method())?
+                    .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                     .filtered(ctx.relation_mode_filter)?
                     .only_transition()?;
                 let mut terminal = Vec::new();
                 let mut folds = Vec::new();
                 for (params, next_witness_len) in dimension_candidates {
+                    if params.ring_relation_mode != relation_transition {
+                        return Err(AkitaError::InvalidSetup(
+                            "materialized mode disagrees with relation domain".into(),
+                        ));
+                    }
                     if (!self.adaptation_guided || self.guide_terminal.is_some())
                         && work.purpose.allows_terminal()
                     {
@@ -928,7 +934,6 @@ impl<'a> CandidateDomain<'a> {
                         && work.purpose.allows_fold()
                     {
                         folds.push(RawFoldCandidate {
-                            relation_transition,
                             params,
                             next_witness_len,
                             opening_reduction_bytes: work.opening_reduction_bytes,

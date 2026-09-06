@@ -19,9 +19,9 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
     init_rayon_pool();
     run_on_large_stack(move || {
         let base_scheme =
-            load_workspace_scheme::<BaseCfg>().expect("embedded base schedule catalog");
+            load_workspace_scheme::<BaseCfg>().expect("workspace base schedule catalog");
         let recursive_scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>()
-            .expect("embedded recursive schedule catalog");
+            .expect("workspace recursive schedule catalog");
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
         let pre_frozen = base_scheme
             .schedules()
@@ -38,7 +38,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .schedules()
             .resolve_key(&schedule_key)
             .expect("recursive profile schedule resolves")
-            .into_schedule();
+            .schedule()
+            .clone();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive profile must carry setup-prefix metadata"

@@ -49,14 +49,16 @@ fn onehot_source_chunk_size<C: CommitmentConfig>() -> usize {
 
 #[test]
 fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
-    let embedded = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("embedded schedule catalog");
-    let artifact = embedded.to_artifact_bytes().expect("schedule artifact");
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
+    let artifact = workspace_catalog
+        .to_artifact_bytes()
+        .expect("schedule artifact");
     let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
 
     assert_eq!(
         scheme.schedules().catalog_digest(),
-        embedded.catalog_digest()
+        workspace_catalog.catalog_digest()
     );
     let key =
         akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
@@ -66,14 +68,15 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
             .resolve_key(&key)
             .expect("artifact row")
             .selection(),
-        embedded
+        workspace_catalog
             .resolve_key(&key)
-            .expect("embedded row")
+            .expect("artifact row")
             .selection()
     );
 
     let expected_capacity =
-        akita_config::trusted_setup_matrix_capacity::<Cfg>(scheme.schedules(), 14, 1)
+        akita_config::SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), 14, 1)
+            .map(|requirements| requirements.matrix_capacity)
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(
@@ -362,7 +365,8 @@ fn expected_same_point_batched_shape(
         .schedules()
         .resolve_key(&key)
         .expect("batched root runtime plan")
-        .into_schedule();
+        .schedule()
+        .clone();
     let root_step = &schedule.root;
     let root_params = &root_step.params;
     let num_fold_levels = schedule.num_fold_levels();

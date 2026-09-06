@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
@@ -239,8 +239,18 @@ where
             self.witness_eval
         };
 
+        let relation_is_reduced = matches!(
+            &self.relation_matrix_evaluator.groups,
+            PreparedRelationGroups::ReducedEvaluation(_)
+        );
         let evaluate_relation_weight = || {
-            let _span = tracing::info_span!("stage2_relation_weight").entered();
+            // `cfg_join!` may execute this closure on a Rayon worker which does
+            // not inherit the caller's `stage2_verifier` span. Carry the
+            // authenticated relation mode on this worker-local owner so phase
+            // diagnostics cannot silently lose coefficient-packing folds.
+            let _span =
+                tracing::info_span!("stage2_relation_weight", reduced = relation_is_reduced)
+                    .entered();
             match self.setup_claim {
                 Some(claim) => self
                     .relation_matrix_evaluator
@@ -530,12 +540,12 @@ mod tests {
             groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
-            flat_context: Some(FlatRelationContext {
+            flat_context: FlatRelationContext {
                 level_params: params.clone(),
                 opening_batch: opening_batch.clone(),
                 witness_layout: Arc::new(witness_layout),
                 extension_degree: <E as ExtField<F>>::DEGREE,
-            }),
+            },
             setup_plan_cache: Default::default(),
         };
         let setup: AkitaExpandedSetup<F> =

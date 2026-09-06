@@ -1,4 +1,5 @@
 use super::*;
+use crate::schedule_params::ReducedTransitionRejection;
 
 struct OpeningSearch<'a> {
     state: SuffixState,
@@ -13,7 +14,7 @@ struct ChildPlan<'a> {
     params: &'a CommittedGroupParams,
     next_witness_len: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    relation_transition: RelationTransition,
+
     natural_setup_field_len: usize,
     direct_edge_is_admissible: bool,
     prune_direct_edge: bool,
@@ -71,27 +72,33 @@ fn plan_candidate_children(
                 dimension_ceiling: plan.params.role_dims(),
                 topology: state
                     .topology
-                    .direct_successor(plan.params.payload_mode, plan.relation_transition),
+                    .direct_successor(plan.params.payload_mode, plan.params.ring_relation_mode),
             },
             search.depth + 1,
         )?)
     };
+    let offload_search_enabled = ctx.policy.recursive_setup_planning
+        && ctx
+            .policy
+            .recursive_setup_search_policy
+            .admits_offloaded_edge_at(state.level)
+        // An offloaded edge accepts only a child suffix with at least two
+        // folds. That topology cannot fit at the last two depths.
+        && search.depth + 2 < MAX_RECURSION_DEPTH;
+    if offload_search_enabled
+        && plan.params.payload_mode.is_compressed()
+        && plan.params.ring_relation_mode.is_reduced_evaluation()
+    {
+        if let Some(diagnostics) = ctx.diagnostics {
+            diagnostics.record_reduced_rejection(ReducedTransitionRejection::OutgoingSetupOffload);
+        }
+    }
     let offloaded_child = SuffixTopology::offloaded_successor(
-        plan.relation_transition,
+        plan.params.ring_relation_mode,
         plan.params.payload_mode,
         plan.natural_setup_field_len,
     )
-    .filter(|_| {
-        guided_successor_is_offloaded != Some(false)
-            && ctx.policy.recursive_setup_planning
-            && ctx
-                .policy
-                .recursive_setup_search_policy
-                .admits_offloaded_edge_at(state.level)
-            // An offloaded edge accepts only a child suffix with at least two
-            // folds. That topology cannot fit at the last two depths.
-            && search.depth + 2 < MAX_RECURSION_DEPTH
-    })
+    .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled)
     .map(|topology| {
         derive_selected_suffix_schedule(
             ctx,
@@ -128,7 +135,6 @@ fn price_planned_fold_candidate(
         next_witness_len,
         opening_reduction_bytes: _,
         next_source_moment,
-        relation_transition,
     } = candidate;
     if let Some(natural_prefix_len) = state.topology.incoming_setup_prefix() {
         let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
@@ -203,7 +209,7 @@ fn price_planned_fold_candidate(
             params: &params,
             next_witness_len,
             next_source_moment,
-            relation_transition,
+
             natural_setup_field_len: natural_len,
             direct_edge_is_admissible,
             prune_direct_edge,
@@ -323,14 +329,15 @@ pub(crate) fn derive_selected_suffix_schedule(
         return Ok(empty_suffix_result());
     }
     let policy = ctx.policy;
+    let relation_phase = state.topology.relation_phase();
     if let Some(diagnostics) = ctx.diagnostics {
-        diagnostics.record_suffix_call();
+        diagnostics.record_suffix_call(relation_phase);
     }
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
         let cached = memo.get(&memo_key);
         if let Some(diagnostics) = ctx.diagnostics {
-            diagnostics.record_memo_result(cached.is_some());
+            diagnostics.record_memo_result(relation_phase, cached.is_some());
         }
         if let Some(cached) = cached {
             return Ok(Arc::clone(cached));
@@ -395,6 +402,6 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_completed_state(frontiers.candidate_count());
     }
     let result = Arc::new(finish_state(retains_setup_projection, frontiers));
-    memo.insert(memo_key, Arc::clone(&result));
+    memo.insert(memo_key, Arc::clone(&result), ctx.diagnostics);
     Ok(result)
 }

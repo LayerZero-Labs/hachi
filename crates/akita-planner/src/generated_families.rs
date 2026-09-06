@@ -164,7 +164,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 
 /// Bounded dense keys.
 ///
-/// 14 is the producer for the bounded precommit descriptor embedded in the
+/// 14 is the producer for the bounded precommit descriptor stored in the
 /// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
 /// and 26 are the sizes where the bound's setup and next-witness savings are
 /// measured against the matching `fp128_dense` rows.
@@ -251,9 +251,7 @@ impl GeneratedFamily {
 /// Returns an error if key enumeration fails.
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
     let mut keys = family.scalar_keys.to_vec();
-    keys.sort_by(|left, right| {
-        AkitaScheduleLookupKey::single(*left).canonical_cmp(&AkitaScheduleLookupKey::single(*right))
-    });
+    keys.sort_by_cached_key(|key| AkitaScheduleLookupKey::single(*key).canonical_order_key());
     keys.dedup();
     Ok(keys)
 }
@@ -290,8 +288,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 ///
 /// Generation cannot read the catalog it is producing, so this plans the row
 /// instead of selecting it. `TrustedScheduleCatalog::resolve_key` is the runtime counterpart, and
-/// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
-/// agree on every shipped descriptor.
+/// `every_grouped_artifact_precommit_has_a_shipped_scalar_producer` asserts the
+/// two agree on every shipped descriptor, including recursive adapter/base-family
+/// mappings.
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
@@ -315,7 +314,7 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
 }
 
 fn sorted_grouped_requests(mut requests: GroupedGenerationRequests) -> GroupedGenerationRequests {
-    requests.sort_by(|left, right| left.key().canonical_cmp(&right.key()));
+    requests.sort_by_cached_key(|request| request.key().canonical_order_key());
     requests
 }
 

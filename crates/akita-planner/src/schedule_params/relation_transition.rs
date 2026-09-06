@@ -1,56 +1,13 @@
 use akita_error::AkitaError;
-use akita_types::RingRelationMode;
+use akita_types::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 
-/// Monotone planner phase for recursive ring-relation realization.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) enum RingRelationPhase {
-    /// Quotient lifting remains available and an eligible direct fold may
-    /// begin the reduced-evaluation suffix.
-    #[default]
-    QuotientPrefix,
-    /// Every later committed fold uses reduced evaluation.
-    ReducedEvaluationSuffix,
-}
-
-/// Typed topology visible to the canonical relation transition authority.
+/// Canonical reason an otherwise-considered reduced transition is ineligible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RelationCandidateTopology {
-    DirectEvaluationTrace,
-    DirectCoefficientPacking,
-    SetupPrefixedEvaluationTrace,
-    SetupPrefixedCoefficientPacking,
-}
-
-impl RelationCandidateTopology {
-    pub(crate) const fn new(
-        consumes_setup_prefix: bool,
-        opening: akita_types::OpeningMethod,
-    ) -> Self {
-        match (consumes_setup_prefix, opening) {
-            (false, akita_types::OpeningMethod::EvaluationTrace) => Self::DirectEvaluationTrace,
-            (false, akita_types::OpeningMethod::SubringCoefficientPacking { .. }) => {
-                Self::DirectCoefficientPacking
-            }
-            (true, akita_types::OpeningMethod::EvaluationTrace) => {
-                Self::SetupPrefixedEvaluationTrace
-            }
-            (true, akita_types::OpeningMethod::SubringCoefficientPacking { .. }) => {
-                Self::SetupPrefixedCoefficientPacking
-            }
-        }
-    }
-
-    const fn is_direct_evaluation_trace(self) -> bool {
-        matches!(self, Self::DirectEvaluationTrace)
-    }
-}
-
-/// One legal per-fold mode selection and its complete recursive consequence.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RelationTransition {
-    mode: RingRelationMode,
-    next_phase: RingRelationPhase,
-    allows_setup_offload: bool,
+pub(crate) enum ReducedTransitionRejection {
+    BeforeLevelTwo,
+    IncomingSetupPrefix,
+    CoefficientPacking,
+    OutgoingSetupOffload,
 }
 
 /// Non-empty legal relation domain for one recursive fold topology.
@@ -112,11 +69,14 @@ impl RelationSearchDomain {
         }
     }
     #[must_use]
-    pub(crate) const fn transitions(self) -> &'static [RelationTransition] {
+    pub(crate) const fn transitions(self) -> &'static [RingRelationMode] {
         match self {
-            Self::QuotientOnly => RelationTransition::QUOTIENT_ONLY,
-            Self::ReducedOnly => RelationTransition::REDUCED_ONLY,
-            Self::QuotientAndReduced => RelationTransition::QUOTIENT_OR_REDUCED,
+            Self::QuotientOnly => &[RingRelationMode::QuotientLift],
+            Self::ReducedOnly => &[RingRelationMode::ReducedEvaluation],
+            Self::QuotientAndReduced => &[
+                RingRelationMode::QuotientLift,
+                RingRelationMode::ReducedEvaluation,
+            ],
         }
     }
 
@@ -124,13 +84,16 @@ impl RelationSearchDomain {
     pub(crate) const fn transitions_in(
         self,
         _order: RelationTraversalOrder,
-    ) -> &'static [RelationTransition] {
+    ) -> &'static [RingRelationMode] {
         #[cfg(all(test, feature = "catalog-gen"))]
         if matches!(
             (self, _order),
             (Self::QuotientAndReduced, RelationTraversalOrder::Reversed)
         ) {
-            return RelationTransition::REDUCED_OR_QUOTIENT;
+            return &[
+                RingRelationMode::ReducedEvaluation,
+                RingRelationMode::QuotientLift,
+            ];
         }
         self.transitions()
     }
@@ -142,7 +105,7 @@ impl RelationSearchDomain {
 
     /// Whether this fold domain admits the complete typed transition.
     #[must_use]
-    pub(crate) fn admits(self, transition: RelationTransition) -> bool {
+    pub(crate) fn admits(self, transition: RingRelationMode) -> bool {
         self.transitions().contains(&transition)
     }
 
@@ -154,23 +117,7 @@ impl RelationSearchDomain {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn transition_for(
-        self,
-        mode: RingRelationMode,
-    ) -> Result<RelationTransition, AkitaError> {
-        self.transitions()
-            .iter()
-            .copied()
-            .find(|transition| transition.mode == mode)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "materialized fold has no transition in its relation domain".into(),
-                )
-            })
-    }
-
-    pub(crate) fn only_transition(self) -> Result<RelationTransition, AkitaError> {
+    pub(crate) fn only_transition(self) -> Result<RingRelationMode, AkitaError> {
         let [transition] = self.transitions() else {
             return Err(AkitaError::InvalidSetup(
                 "relation domain does not contain exactly one transition".into(),
@@ -187,62 +134,43 @@ impl RelationSearchDomain {
     }
 }
 
-impl RelationTransition {
-    const QUOTIENT: Self = Self {
-        mode: RingRelationMode::QuotientLift,
-        next_phase: RingRelationPhase::QuotientPrefix,
-        allows_setup_offload: true,
-    };
-    const REDUCED: Self = Self {
-        mode: RingRelationMode::ReducedEvaluation,
-        next_phase: RingRelationPhase::ReducedEvaluationSuffix,
-        allows_setup_offload: false,
-    };
-    const QUOTIENT_ONLY: &[Self] = &[Self::QUOTIENT];
-    const QUOTIENT_OR_REDUCED: &[Self] = &[Self::QUOTIENT, Self::REDUCED];
-    #[cfg(all(test, feature = "catalog-gen"))]
-    const REDUCED_OR_QUOTIENT: &[Self] = &[Self::REDUCED, Self::QUOTIENT];
-    const REDUCED_ONLY: &[Self] = &[Self::REDUCED];
-
-    #[must_use]
-    pub(crate) const fn mode(self) -> RingRelationMode {
-        self.mode
-    }
-
-    #[must_use]
-    pub(crate) const fn next_phase(self) -> RingRelationPhase {
-        self.next_phase
-    }
-
-    #[must_use]
-    pub(crate) const fn allows_setup_offload(self) -> bool {
-        self.allows_setup_offload
-    }
-}
-
-impl RingRelationPhase {
+impl RelationSearchDomain {
     /// Enumerate the complete legal transition domain for one fold topology.
-    pub(crate) fn transitions(
-        self,
+    pub(crate) fn for_topology(
+        phase: RingRelationPhase,
         absolute_fold_level: usize,
         topology: RelationCandidateTopology,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) -> Result<RelationSearchDomain, AkitaError> {
-        match self {
-            Self::QuotientPrefix
-                if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
-            {
-                Ok(RelationSearchDomain::QuotientAndReduced)
+        if matches!(phase, RingRelationPhase::QuotientPrefix) {
+            if absolute_fold_level < 2 {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::BeforeLevelTwo);
+                }
             }
-            Self::QuotientPrefix => Ok(RelationSearchDomain::QuotientOnly),
-            Self::ReducedEvaluationSuffix
-                if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
-            {
-                Ok(RelationSearchDomain::ReducedOnly)
+            if topology.consumes_setup_prefix() {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::IncomingSetupPrefix);
+                }
             }
-            Self::ReducedEvaluationSuffix => Err(AkitaError::InvalidSetup(
-                "reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later"
-                    .into(),
-            )),
+            if topology.uses_coefficient_packing() {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::CoefficientPacking);
+                }
+            }
         }
+        let domain = match phase.candidate_modes(absolute_fold_level, topology) {
+            [RingRelationMode::QuotientLift, RingRelationMode::ReducedEvaluation] => Self::QuotientAndReduced,
+            [RingRelationMode::QuotientLift] => Self::QuotientOnly,
+            [RingRelationMode::ReducedEvaluation] => Self::ReducedOnly,
+            _ => return Err(AkitaError::InvalidSetup("reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later".into())),
+        };
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_relation_domain(domain);
+        }
+        Ok(domain)
     }
 }

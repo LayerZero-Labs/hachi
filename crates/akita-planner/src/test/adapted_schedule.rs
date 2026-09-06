@@ -116,6 +116,7 @@ fn assert_frozen_skeleton(main: &akita_types::FoldSchedule, adapted: &akita_type
 fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, AkitaError> {
     akita_config::test_support::workspace_schedule_catalog::<Dense>()?
         .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .cloned()
 }
 
 #[test]

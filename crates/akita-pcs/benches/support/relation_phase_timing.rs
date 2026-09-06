@@ -118,16 +118,14 @@ struct PhaseStart {
     phase: TimedRelationPhase,
 }
 
-struct RelationPhaseTimingLayer;
+pub(crate) struct RelationPhaseTimingLayer;
 
 impl<S> Layer<S> for RelationPhaseTimingLayer
 where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, context: Context<'_, S>) {
-        if TimedRelationPhase::from_span_name(attrs.metadata().name())
-            != Some(TimedRelationPhase::CompleteStage2)
-        {
+        if !ACTIVE.load(Ordering::Relaxed) {
             return;
         }
         let mut visitor = RelationModeVisitor(None);
@@ -138,6 +136,9 @@ where
     }
 
     fn on_enter(&self, id: &Id, context: Context<'_, S>) {
+        if !ACTIVE.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(span) = context.span(id) else {
             return;
         };
@@ -158,6 +159,9 @@ where
     }
 
     fn on_exit(&self, id: &Id, context: Context<'_, S>) {
+        if !ACTIVE.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(span) = context.span(id) else {
             return;
         };
@@ -201,26 +205,92 @@ fn reset() {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PhaseMeasurement {
+    pub(crate) relation_mode: &'static str,
+    pub(crate) phase: &'static str,
+    pub(crate) calls: u64,
+    pub(crate) elapsed_nanos: u64,
+}
+
+fn measurements() -> Vec<PhaseMeasurement> {
+    let mut measurements = Vec::new();
+    for mode in TimedRelationMode::ALL {
+        for phase in TimedRelationPhase::ALL {
+            let calls = CALLS[mode.index()][phase.index()].load(Ordering::Relaxed);
+            if calls == 0 {
+                continue;
+            }
+            measurements.push(PhaseMeasurement {
+                relation_mode: mode.report_name(),
+                phase: phase.report_name(),
+                calls,
+                elapsed_nanos: ELAPSED_NANOS[mode.index()][phase.index()].load(Ordering::Relaxed),
+            });
+        }
+    }
+    measurements
+}
+
+fn validate_complete_phase_counts() {
+    let calls = |mode: TimedRelationMode, phase: TimedRelationPhase| {
+        CALLS[mode.index()][phase.index()].load(Ordering::Relaxed)
+    };
+    for mode in TimedRelationMode::ALL {
+        let complete = calls(mode, TimedRelationPhase::CompleteStage2);
+        if complete == 0 {
+            continue;
+        }
+        for phase in [
+            TimedRelationPhase::CoefficientFunctionalPreparation,
+            TimedRelationPhase::StructuredGroups,
+        ] {
+            assert_eq!(
+                calls(mode, phase),
+                complete,
+                "{} {} calls must match complete Stage-2 calls",
+                mode.report_name(),
+                phase.report_name(),
+            );
+        }
+        let quotient_tail = calls(mode, TimedRelationPhase::QuotientTail);
+        match mode {
+            TimedRelationMode::Quotient => assert_eq!(
+                quotient_tail, complete,
+                "quotient-tail calls must match quotient complete Stage-2 calls",
+            ),
+            TimedRelationMode::Reduced => assert_eq!(
+                quotient_tail, 0,
+                "reduced evaluation must not execute a quotient tail",
+            ),
+        }
+    }
+}
+
+pub(crate) fn capture<T>(operation: impl FnOnce() -> T) -> (T, Vec<PhaseMeasurement>) {
+    let capture = ActiveCapture::start();
+    let result = operation();
+    drop(capture);
+    validate_complete_phase_counts();
+    (result, measurements())
+}
+
 /// Install the phase-only tracing subscriber used by this benchmark process.
+#[allow(dead_code)] // The profile binary installs the layer into its existing subscriber.
 pub(crate) fn init() {
     tracing_subscriber::registry()
-        .with(
-            RelationPhaseTimingLayer.with_filter(tracing_subscriber::filter::dynamic_filter_fn(
-                |metadata, _context| {
-                    ACTIVE.load(Ordering::Relaxed)
-                        && TimedRelationPhase::from_span_name(metadata.name()).is_some()
-                },
-            )),
-        )
+        .with(RelationPhaseTimingLayer)
         .init();
 }
 
 /// Run a few honest replays and print the selected per-mode phase table.
+#[allow(dead_code)] // Bench-only API; the profile binary consumes `capture` directly.
 pub(crate) fn report(label: &str, num_vars: usize, iterations: u64, mut operation: impl FnMut()) {
-    let _capture = ActiveCapture::start();
-    for _ in 0..iterations {
-        operation();
-    }
+    let ((), measurements) = capture(|| {
+        for _ in 0..iterations {
+            operation();
+        }
+    });
     assert!(
         CALLS
             .iter()
@@ -230,32 +300,28 @@ pub(crate) fn report(label: &str, num_vars: usize, iterations: u64, mut operatio
             ),
         "selected verifier replay produced no Stage-2 phase samples"
     );
-    for mode in TimedRelationMode::ALL {
-        let mode_index = mode.index();
-        if CALLS[mode_index][TimedRelationPhase::CompleteStage2.index()].load(Ordering::Relaxed)
-            == 0
-        {
-            continue;
-        }
-        for phase in TimedRelationPhase::ALL {
-            let calls = CALLS[mode_index][phase.index()].load(Ordering::Relaxed);
-            let elapsed = ELAPSED_NANOS[mode_index][phase.index()].load(Ordering::Relaxed);
-            eprintln!(
-                "relation_phase\t{label}\tnv{num_vars}\t{}\t{}\t{calls}\t{}",
-                mode.report_name(),
-                phase.report_name(),
-                elapsed.checked_div(calls).unwrap_or(0),
-            );
-        }
+    for measurement in measurements {
+        eprintln!(
+            "relation_phase\t{label}\tnv{num_vars}\t{}\t{}\t{}\t{}",
+            measurement.relation_mode,
+            measurement.phase,
+            measurement.calls,
+            measurement
+                .elapsed_nanos
+                .checked_div(measurement.calls)
+                .unwrap_or(0),
+        );
     }
 }
 
 /// Measure only complete Stage-2 spans while replaying the public verifier.
+#[allow(dead_code)] // Bench-only API; the profile binary consumes `capture` directly.
 pub(crate) fn measure_complete_stage2(iterations: u64, mut operation: impl FnMut()) -> Duration {
-    let _capture = ActiveCapture::start();
-    for _ in 0..iterations {
-        operation();
-    }
+    let ((), measurements) = capture(|| {
+        for _ in 0..iterations {
+            operation();
+        }
+    });
     assert!(
         CALLS
             .iter()
@@ -265,9 +331,10 @@ pub(crate) fn measure_complete_stage2(iterations: u64, mut operation: impl FnMut
             ),
         "selected verifier replay produced no Stage-2 phase samples"
     );
-    let nanos = ELAPSED_NANOS
+    let nanos = measurements
         .iter()
-        .map(|mode| mode[TimedRelationPhase::CompleteStage2.index()].load(Ordering::Relaxed))
+        .filter(|measurement| measurement.phase == "complete_stage2")
+        .map(|measurement| measurement.elapsed_nanos)
         .sum();
     Duration::from_nanos(nanos)
 }

@@ -178,10 +178,10 @@ later execution during preprocessing restoration or in a guest.
 - [x] `akita-schedules` accepts and emits canonical versioned JSON family
   artifacts containing expanded rows, protocol epoch, family identity, planner-
   policy identity, and produces a deterministic full-catalog digest.
-- [x] Artifact decoding rejects empty or larger-than-64-MiB inputs, more than
-  16,384 rows, invalid family names, noncanonical JSON, unsupported versions,
-  wrong epochs, wrong families, wrong policies, duplicate lookup keys, duplicate
-  row digests, and invalid expanded rows.
+- [x] Artifact decoding rejects empty or larger-than-64-MiB inputs, rows larger
+  than 1 MiB, more than 16,384 rows, invalid family names, noncanonical JSON,
+  unsupported versions, wrong epochs, wrong families, wrong policies, duplicate
+  lookup keys, duplicate row digests, and invalid expanded rows.
 - [x] `TrustedScheduleCatalog` is the sole production row index and provides
   canonical row iteration plus exact resolution by selection, lookup key, and
   committed profiles.
@@ -191,7 +191,7 @@ later execution during preprocessing restoration or in a guest.
   `Arc` state.
 - [x] `AkitaCommitmentScheme::schedules()` exposes a borrow of the exact catalog
   used by all scheme operations; no operation consults config-owned rows.
-- [x] `trusted_setup_matrix_capacity::<Cfg>(&catalog, max_num_vars,
+- [x] `SetupRequirements::from_catalog::<Cfg>(&catalog, max_num_vars,
   max_num_batched_polys)` scans only eligible exact catalog rows and accounts for
   both full schedules and independent precommit matrix requirements.
 - [x] Prover setup construction and persisted-setup restoration receive the
@@ -332,11 +332,16 @@ constructing the scheme.
 The host-facing artifact is deterministically formatted canonical JSON for
 auditability, readable diffs, and operational tooling. Structural catalog and
 row boundaries use line breaks while nested row payloads stay compact. It
-contains fully expanded rows; loading never runs planner search.
+contains fully expanded rows; loading never runs planner search. Each serialized
+row contains only `schedule`. Its validated root groups determine the final and
+ordered precommitted profiles; the artifact does not serialize a second copy.
+The runtime retains these derived profiles for borrowed lookup and uses them in
+the unchanged semantic row-digest encoding.
 `TrustedScheduleCatalog::from_artifact_bytes` checks the configured bounds and
-metadata, reconstructs every `ResolvedScheduleRow`, sorts rows by digest, builds
-the separate prover-key index, rejects duplicates, and recomputes the catalog
-digest.
+metadata. It borrows raw row slices and enforces the 1-MiB per-row limit before
+typed nested collections are decoded. It then reconstructs every
+`ResolvedScheduleRow`, sorts rows by digest, builds the separate prover-key
+index, rejects duplicates, and recomputes the catalog digest.
 
 `TrustedScheduleCatalog::to_artifact_bytes` emits the same canonical
 representation. The repository tracks release and test artifacts under
@@ -353,9 +358,9 @@ impl TrustedScheduleCatalog {
     fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError>;
     fn try_new(...) -> Result<Self, AkitaError>;
     fn rows(&self) -> impl ExactSizeIterator<Item = &ResolvedScheduleRow>;
-    fn resolve_selection(...) -> Result<ResolvedScheduleRow, AkitaError>;
-    fn resolve_key(...) -> Result<ResolvedScheduleRow, AkitaError>;
-    fn resolve_profiles(...) -> Result<ResolvedScheduleRow, AkitaError>;
+    fn resolve_selection(...) -> Result<&ResolvedScheduleRow, AkitaError>;
+    fn resolve_key(...) -> Result<&ResolvedScheduleRow, AkitaError>;
+    fn resolve_profiles(...) -> Result<&ResolvedScheduleRow, AkitaError>;
     fn catalog_digest(&self) -> [u8; 32];
 }
 
@@ -380,15 +385,18 @@ state.
 
 ### Exact setup capacity
 
-`trusted_setup_matrix_capacity::<Cfg>` validates the catalog/config binding and
+`SetupRequirements::from_catalog::<Cfg>` validates the catalog/config binding and
 the requested bounds, then scans the supplied catalog once. A row contributes its
 full schedule matrix capacity only when its exact lookup key fits both requested
 bounds. Each precommitted profile can independently contribute its commit-only
 inner/outer matrix requirement when that profile fits the bounds, even if the
 larger grouped row does not.
 
-Recursive prefix-slot enumeration uses the same catalog and bounds. Setup
-generation materializes exactly those required slots. Persisted setup restoration
+The same scan collects recursive prefix slots for eligible rows.
+`SetupRequirements` carries the matrix capacity and ordered prefix IDs through
+cache loading, coverage checks, repair, and fresh setup generation. These paths
+reuse the requirements instead of rescanning the catalog. Setup generation
+materializes exactly those required slots. Persisted setup restoration
 receives the catalog explicitly, validates the stored registry against the exact
 required identifiers, and keys catalog-dependent persistence by
 `catalog_digest()`.
@@ -487,7 +495,7 @@ encode another temporary registry or restoration path.
 4. **Stabilize native ownership and sizing.** Finalize
    `TrustedScheduleCatalog`, `AkitaCommitmentScheme::new`,
    `from_schedule_artifact`, `schedules`, explicit low-level catalog borrows,
-   `trusted_setup_matrix_capacity`, and catalog-driven prefix-slot materialization.
+   `SetupRequirements::from_catalog`, and catalog-driven prefix-slot materialization.
 5. **Migrate restoration and runtime callers.** Make setup restoration, tests,
    examples, benches, profiles, commitment, proving, and verification use the
    explicitly supplied catalog. Remove planner and ambient-registry behavior from

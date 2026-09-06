@@ -1,7 +1,9 @@
 use akita_config::{
     policy_of, proof_optimized::fp128, trusted_schedule_catalog_from_bytes, CommitmentConfig,
-    TrustedScheduleCatalog,
+    RecursiveCommitmentConfig, TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
+use akita_serialization::AkitaSerialize;
 use akita_types::{OpeningScheduleSelection, ScheduleRowDigest};
 
 fn checked_in_catalog<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog {
@@ -21,6 +23,34 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     std::fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
+    akita_config::SetupRequirements::from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
+        .map(|requirements| requirements.prefix_slot_ids)
+        .expect("derive recursive setup-prefix slots")
+        .into_iter()
+        .map(|slot| {
+            let mut bytes = Vec::new();
+            slot.serialize_compressed(&mut bytes)
+                .expect("serialize setup-prefix slot id");
+            bytes
+                .into_iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .collect()
+}
+
+fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
+    let slots = serialized_slot_ids::<Cfg>();
+    let digest =
+        akita_types::instance_descriptor::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = digest
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    (slots.len(), digest)
 }
 
 fn json_value_start(bytes: &[u8], key: &[u8], occurrence: usize) -> usize {
@@ -98,6 +128,22 @@ fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
+fn pad_first_row(bytes: &[u8], padding_len: usize) -> Vec<u8> {
+    let first_row = json_row_ranges(bytes)
+        .into_iter()
+        .next()
+        .expect("first row");
+    let insert_at = first_row.end - 1;
+    let field_prefix = b",\"untrusted_padding\":\"";
+    let mut padded = Vec::with_capacity(bytes.len() + field_prefix.len() + padding_len + 1);
+    padded.extend_from_slice(&bytes[..insert_at]);
+    padded.extend_from_slice(field_prefix);
+    padded.extend(std::iter::repeat_n(b'x', padding_len));
+    padded.push(b'"');
+    padded.extend_from_slice(&bytes[insert_at..]);
+    padded
+}
+
 fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
     let ranges = json_row_ranges(bytes);
     let first = ranges.first().expect("complete first artifact row");
@@ -123,6 +169,42 @@ fn swap_first_two_json_rows(bytes: &[u8]) -> Vec<u8> {
     swapped.extend_from_slice(&bytes[first.clone()]);
     swapped.extend_from_slice(&bytes[second.end..]);
     swapped
+}
+
+fn replace_family_name(bytes: &[u8], family_name: &str) -> Vec<u8> {
+    let value_start = json_value_start(bytes, b"\"family_name\"", 0);
+    assert_eq!(bytes.get(value_start), Some(&b'"'));
+    let value_end = bytes[value_start + 1..]
+        .iter()
+        .position(|byte| *byte == b'"')
+        .map(|relative| value_start + 1 + relative)
+        .expect("family name terminator");
+    let mut replaced = Vec::with_capacity(bytes.len() + family_name.len());
+    replaced.extend_from_slice(&bytes[..value_start + 1]);
+    replaced.extend_from_slice(family_name.as_bytes());
+    replaced.extend_from_slice(&bytes[value_end..]);
+    replaced
+}
+
+fn replace_rows_with_empty_objects(bytes: &[u8], row_count: usize) -> Vec<u8> {
+    let rows_start = json_value_start(bytes, b"\"rows\"", 0);
+    assert_eq!(bytes.get(rows_start), Some(&b'['));
+    let ranges = json_row_ranges(bytes);
+    let rows_end = bytes[ranges.last().expect("last artifact row").end..]
+        .iter()
+        .position(|byte| *byte == b']')
+        .map(|relative| ranges.last().expect("last artifact row").end + relative)
+        .expect("rows array terminator");
+    let mut replaced = Vec::with_capacity(bytes.len() + row_count * 3);
+    replaced.extend_from_slice(&bytes[..rows_start + 1]);
+    for index in 0..row_count {
+        if index != 0 {
+            replaced.push(b',');
+        }
+        replaced.extend_from_slice(b"{}");
+    }
+    replaced.extend_from_slice(&bytes[rows_end..]);
+    replaced
 }
 
 fn empty_nth_fold_group_list(bytes: &[u8], occurrence: usize) -> Vec<u8> {
@@ -182,6 +264,14 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
     assert_eq!(loaded_row.selection(), checked_in_row.selection());
     assert_eq!(loaded_row.profiles(), checked_in_row.profiles());
+    assert!(std::ptr::eq(
+        loaded_row,
+        loaded.resolve_selection(loaded_row.selection()).unwrap()
+    ));
+    assert!(std::ptr::eq(
+        loaded_row,
+        loaded.resolve_profiles(loaded_row.profiles()).unwrap()
+    ));
     assert_eq!(loaded_row.schedule(), checked_in_row.schedule());
     assert!(loaded_row
         .schedule()
@@ -221,7 +311,7 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
         .expect_err("an empty artifact must reject");
     assert!(format!("{empty}").contains("byte length"));
 
-    let oversized = vec![b' '; 64 * 1024 * 1024 + 1];
+    let oversized = vec![b' '; MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES + 1];
     let oversized_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized)
         .expect_err("an oversized artifact must reject before decoding");
     assert!(format!("{oversized_error}").contains("byte length"));
@@ -230,7 +320,40 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
     noncanonical.push(b'\n');
     let noncanonical_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&noncanonical)
         .expect_err("trailing whitespace must reject");
-    assert!(format!("{noncanonical_error}").contains("canonical JSON"));
+    let noncanonical_error = noncanonical_error.to_string();
+    assert!(
+        noncanonical_error.contains("canonical JSON"),
+        "unexpected noncanonical error: {noncanonical_error}"
+    );
+}
+
+#[test]
+fn decoder_rejects_family_and_row_limits_during_envelope_preflight() {
+    let bytes = checked_in_artifact_bytes::<fp128::Dense>();
+
+    let oversized_family = replace_family_name(&bytes, &"x".repeat(129));
+    let family_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_family)
+        .expect_err("oversized family must reject during envelope decoding");
+    let family_error = family_error.to_string();
+    assert!(
+        family_error.contains("family name length"),
+        "unexpected family error: {family_error}"
+    );
+
+    let escaped_family = replace_family_name(&bytes, r"\u0066p128_dense");
+    let family_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&escaped_family)
+        .expect_err("an escaped family spelling must reject before decoded allocation");
+    assert!(family_error.to_string().contains("family token"));
+
+    let oversized_rows = replace_rows_with_empty_objects(&bytes, 16_385);
+    let row_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_rows)
+        .expect_err("the sentinel artifact row must reject before row decoding");
+    assert!(format!("{row_error}").contains("row count exceeds 16384"));
+
+    let oversized_row = pad_first_row(&bytes, MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES);
+    let row_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_row)
+        .expect_err("an oversized raw row must reject before typed row decoding");
+    assert!(format!("{row_error}").contains("row 0 byte length"));
 }
 
 #[test]
@@ -322,9 +445,30 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
     .expect_err("empty catalogs must reject");
     assert!(format!("{empty}").contains("row count"));
 
+    struct PanicAfterSentinel<T> {
+        row: T,
+        polls: usize,
+    }
+
+    impl<T: Clone> Iterator for PanicAfterSentinel<T> {
+        type Item = T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            assert!(
+                self.polls <= 16_384,
+                "catalog constructor polled beyond the sentinel row"
+            );
+            self.polls += 1;
+            Some(self.row.clone())
+        }
+    }
+
     let too_many = TrustedScheduleCatalog::try_new(
         fp128::Dense::schedule_family_name(),
-        std::iter::repeat_n(owned_row, 16_385),
+        PanicAfterSentinel {
+            row: owned_row,
+            polls: 0,
+        },
         &policy,
         fp128::Dense::ring_challenge_config,
     )
@@ -341,4 +485,86 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
     )
     .expect_err("family names must be bounded");
     assert!(format!("{long_family}").contains("family name length"));
+}
+
+#[test]
+fn recursive_prefix_slot_id_fixture() {
+    let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>();
+    let multichunk =
+        recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
+    assert_eq!(
+        onehot,
+        (
+            3,
+            "7aa5dc54754bdf48823cde0aac34c3926c207e64a118f8ebe9c44d7985484dac".to_string(),
+        )
+    );
+    assert_eq!(
+        multichunk,
+        (
+            3,
+            "20fc40144b1de0c287268de2fd6a9bf168f49fb715f60525ef410f6ab4a07156".to_string(),
+        )
+    );
+}
+
+#[test]
+fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
+    let dense = checked_in_catalog::<fp128::Dense>();
+    let zero_batch = akita_config::SetupRequirements::from_catalog::<fp128::Dense>(&dense, 14, 0)
+        .map(|requirements| requirements.prefix_slot_ids)
+        .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
+    assert!(format!("{zero_batch}").contains("at least 1"));
+
+    let recursive = checked_in_catalog::<RecursiveCommitmentConfig<fp128::OneHot>>();
+    let oversized_vars = akita_config::SetupRequirements::from_catalog::<
+        RecursiveCommitmentConfig<fp128::OneHot>,
+    >(&recursive, usize::BITS as usize, 1)
+    .map(|requirements| requirements.prefix_slot_ids)
+    .expect_err("oversized setup metadata must reject for recursive configs");
+    assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
+}
+
+#[test]
+fn artifact_rows_reject_a_second_profile_authority() {
+    let bytes = checked_in_artifact_bytes::<fp128::Dense>();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.contains("\"profiles\""));
+    let duplicated = text.replacen("\"schedule\":", "\"profiles\":{},\"schedule\":", 1);
+    let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(duplicated.as_bytes())
+        .expect_err("serialized profiles must not supply a second authority");
+    assert!(error.to_string().contains("unknown field `profiles`"));
+}
+
+#[test]
+fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
+    type Cfg = fp128::Dense;
+    let catalog = checked_in_catalog::<Cfg>();
+    let row = catalog
+        .rows()
+        .find(|row| !row.profiles().precommitteds.is_empty())
+        .expect("dense grouped row");
+    let profile = row.profiles().precommitteds[0];
+    assert!(row.profiles().final_group.group.num_vars() > profile.group.num_vars());
+    let grouped_only = TrustedScheduleCatalog::try_new(
+        Cfg::schedule_family_name(),
+        [(row.profiles().clone(), row.schedule().clone())],
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+    .unwrap();
+    let required = akita_config::SetupRequirements::from_catalog::<Cfg>(
+        &grouped_only,
+        profile.group.num_vars(),
+        profile.group.num_polynomials(),
+    )
+    .expect("independent precommit remains supported");
+    let expected = akita_types::commit_only_setup_field_elements(
+        &profile.inner.matrix,
+        &profile.outer.matrix,
+        profile.outer_slice_count,
+    )
+    .unwrap();
+    assert_eq!(required.matrix_capacity.num_field_elements, expected);
+    assert!(required.prefix_slot_ids.is_empty());
 }

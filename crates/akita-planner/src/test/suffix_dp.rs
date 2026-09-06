@@ -27,13 +27,13 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
     for key in [direct, prefixed] {
-        memo.insert(key, super::empty_suffix_result());
+        memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result());
+    memo.insert(direct, super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
@@ -46,40 +46,22 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
     let prefix = super::RingRelationPhase::QuotientPrefix;
     let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
     let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
+    assert_eq!(prefix.candidate_modes(1, direct_trace), &[QuotientLift]);
     assert_eq!(
-        prefix
-            .transitions(1, direct_trace)
-            .unwrap()
-            .transitions()
-            .iter()
-            .map(|transition| transition.mode())
-            .collect::<Vec<_>>(),
-        vec![QuotientLift]
+        prefix.candidate_modes(2, direct_trace),
+        &[QuotientLift, ReducedEvaluation]
     );
     assert_eq!(
-        prefix
-            .transitions(2, direct_trace)
-            .unwrap()
-            .transitions()
-            .iter()
-            .map(|transition| transition.mode())
-            .collect::<Vec<_>>(),
-        vec![QuotientLift, ReducedEvaluation]
+        reduced.candidate_modes(2, direct_trace),
+        &[ReducedEvaluation]
     );
-    let reduced_transition = reduced
-        .transitions(2, direct_trace)
-        .unwrap()
-        .transition_for(akita_types::RingRelationMode::ReducedEvaluation)
-        .unwrap();
-    assert_eq!(reduced_transition.mode(), ReducedEvaluation);
-    assert_eq!(reduced_transition.next_phase(), reduced);
-    assert!(!reduced_transition.allows_setup_offload());
+    assert_eq!(prefix.after(ReducedEvaluation), reduced);
     assert!(reduced
-        .transitions(
+        .candidate_modes(
             2,
-            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace,
+            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace
         )
-        .is_err());
+        .is_empty());
 
     let quotient_key = memo_key(2, None);
     let mut reduced_key = quotient_key;

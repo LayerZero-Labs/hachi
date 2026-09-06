@@ -206,7 +206,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
     let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("embedded schedule catalog");
+        .expect("workspace schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let key = akita_types::AkitaScheduleLookupKey::single(
@@ -225,7 +225,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
 
     let setup_envelope =
-        akita_config::trusted_setup_matrix_capacity::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+        akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+            .map(|requirements| requirements.matrix_capacity)
             .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
