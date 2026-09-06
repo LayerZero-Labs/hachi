@@ -753,3 +753,63 @@ fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
     decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
     assert_eq!(fused_acc, generic_acc);
 }
+
+#[test]
+fn balanced_digit_carry_matches_euclidean_division() {
+    for log_basis in 1..=16 {
+        let b = 1i128 << log_basis;
+        let half = b / 2;
+        let params = DecomposeParams {
+            threshold: 0,
+            q: 0,
+            mask: b - 1,
+            half_b: half,
+            b_val: b,
+            log_basis,
+            overflow_possible: false,
+        };
+        let check = |original: i128| {
+            // Division/remainder provide an independent oracle for the bit kernel.
+            let remainder = original.rem_euclid(b);
+            let (digit, quotient) = if remainder >= half {
+                (remainder - b, original.div_euclid(b) + 1)
+            } else {
+                (remainder, original.div_euclid(b))
+            };
+            let mut carry = original;
+            assert_eq!(
+                i128::from(super::extract_balanced_digit(&mut carry, &params)),
+                digit
+            );
+            assert_eq!(carry, quotient);
+        };
+        for original in [
+            i128::MIN,
+            i128::MIN + 1,
+            i128::MAX - 1,
+            i128::MAX,
+            -b - 1,
+            -b,
+            -half - 1,
+            -half,
+            -1,
+            0,
+            1,
+            half - 1,
+            half,
+            half + 1,
+            b - 1,
+            b,
+            b + half,
+        ] {
+            check(original);
+        }
+        let mut state = 0x9e3779b97f4a7c156a09e667f3bcc909u128;
+        for _ in 0..4096 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            check(state as i128);
+        }
+    }
+}

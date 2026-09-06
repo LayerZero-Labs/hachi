@@ -320,7 +320,7 @@ pub(crate) fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
     if p.log_basis == 2 {
         let d = (*c as i32) & 3;
         let balanced = if d >= 2 { d - 4 } else { d };
-        *c = (*c - i128::from(balanced)) >> 2;
+        *c = (*c >> 2) + i128::from(d >= 2);
         return balanced;
     }
 
@@ -330,7 +330,9 @@ pub(crate) fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
     } else {
         d
     };
-    *c = (*c - i128::from(balanced)) >> p.log_basis;
+    // Arithmetic shift gives floor(c / B). Balancing the low digit adds
+    // one to that quotient, avoiding a wide subtraction on the carry chain.
+    *c = (*c >> p.log_basis) + i128::from(d >= p.half_b as i32);
     balanced
 }
 
