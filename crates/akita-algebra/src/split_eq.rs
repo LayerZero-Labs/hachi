@@ -21,7 +21,7 @@
 //! then from `τ_second_half`. Suffix-cached eq tables for each half enable
 //! O(1) pops per round instead of an O(2^n) fold.
 
-use super::eq_poly::EqPolynomial;
+use super::eq_poly::{eq_factor, EqPolynomial};
 use super::uni_poly::UniPoly;
 use crate::{Field, Ring};
 use akita_error::AkitaError;
@@ -139,7 +139,7 @@ impl<E: Field> GruenSplitEq<E> {
     /// appropriate split table level.
     pub fn bind(&mut self, r: E) {
         let tau_k = self.tau[self.current_round];
-        self.current_scalar *= tau_k * r + (E::one() - tau_k) * (E::one() - r);
+        self.current_scalar *= eq_factor(tau_k, r);
         self.current_round += 1;
         if self.E_first.len() > 1 {
             self.E_first.pop();
