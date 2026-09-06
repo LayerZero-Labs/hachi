@@ -8,20 +8,12 @@ use crate::kernels::linear::{
     centered_quotient_rows_with_i16_tail, digit_relation_matrix_extent,
     digit_relation_rows_cached_prover_bounds, digit_relation_rows_streamed_prover_bounds,
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedQuotientRows,
+    fused_split_eq_quotients_streamed_prover_bounds, CenteredRhs, DigitRelationRows,
+    FusedQuotientRows,
 };
 use akita_error::AkitaError;
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
 use jolt_field::{CanonicalEncoding, Field};
-
-fn centered_rhs_abs_bound<const D: usize>(rows: &[[i32; D]], claimed: u32) -> u64 {
-    rows.iter()
-        .flat_map(|row| row.iter())
-        .map(|value| u64::from(value.unsigned_abs()))
-        .max()
-        .unwrap_or(0)
-        .max(u64::from(claimed))
-}
 
 fn validate_role_shape(role: &str, rows: usize, width: usize) -> Result<(), AkitaError> {
     if rows != 0 && width == 0 {
@@ -62,8 +54,7 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
                 plan.n_b,
                 0,
                 source.t_hat,
-                &[],
-                0,
+                CenteredRhs::new(&[], 0),
                 plan.log_basis_outer,
             )?;
             return Ok(rows);
@@ -75,10 +66,8 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
             NttTransformDomain::Negacyclic,
         )?;
         prepared.with_shared_ntt::<D, _>(negacyclic_requirement, |negacyclic_ntt| {
-            if centered_quotient_requires_i16_tail_for_field::<F, D>(centered_rhs_abs_bound(
-                source.z_segment,
-                source.z_folded_centered_inf_norm,
-            ))? {
+            let z_rhs = CenteredRhs::new(source.z_segment, source.z_folded_centered_inf_norm);
+            if centered_quotient_requires_i16_tail_for_field::<F, D>(z_rhs.capacity())? {
                 let tail_requirement = NttCacheKey::from_matrix_shape(
                     D,
                     plan.n_a,
@@ -92,8 +81,7 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
                         plan.n_b,
                         0,
                         source.t_hat,
-                        &[],
-                        0,
+                        CenteredRhs::new(&[], 0),
                         plan.log_basis_outer,
                     )?;
                     let a_quotients = centered_quotient_rows_with_i16_tail(
@@ -101,8 +89,7 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
                         cyclic_ntt,
                         tail_ntt,
                         plan.n_a,
-                        source.z_segment,
-                        source.z_folded_centered_inf_norm,
+                        z_rhs,
                     )?;
                     Ok(FusedQuotientRows {
                         b_cyclic: b_rows.b_cyclic,
@@ -116,8 +103,7 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
                 plan.n_b,
                 plan.n_a,
                 source.t_hat,
-                source.z_segment,
-                source.z_folded_centered_inf_norm,
+                z_rhs,
                 plan.log_basis_outer,
             )?;
             Ok(rows)

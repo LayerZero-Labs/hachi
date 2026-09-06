@@ -15,6 +15,30 @@ struct CenteredRhsBounds {
     lut: u64,
 }
 
+/// Centered quotient rows coupled to the exact bounds derived from them.
+#[derive(Clone, Copy)]
+pub(crate) struct CenteredRhs<'a, const D: usize> {
+    rows: &'a [[i32; D]],
+    bounds: CenteredRhsBounds,
+}
+
+impl<'a, const D: usize> CenteredRhs<'a, D> {
+    pub(crate) fn new(rows: &'a [[i32; D]], claimed: u32) -> Self {
+        let actual = centered_rows_abs_bound(rows, rows.len());
+        Self {
+            rows,
+            bounds: CenteredRhsBounds {
+                capacity: u64::from(claimed).max(actual),
+                lut: actual,
+            },
+        }
+    }
+
+    pub(crate) const fn capacity(self) -> u64 {
+        self.bounds.capacity
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FusedQuotientRows<F: Field, const D: usize> {
     pub(crate) b_cyclic: Vec<CyclotomicRing<F, D>>,
@@ -28,20 +52,20 @@ struct FusedNttAccumulators<W: PrimeWidth, const K: usize, const D: usize> {
 }
 
 #[derive(Clone, Copy)]
-struct FusedQuotientPlan {
+struct FusedQuotientPlan<'a, const D: usize> {
     n_b: usize,
     n_a: usize,
     t_len: usize,
     z_len: usize,
     max_col: usize,
     t_digit_abs_bound: u64,
-    z_bounds: CenteredRhsBounds,
+    z_rhs: CenteredRhs<'a, D>,
     t_chunk_width: Option<usize>,
     z_chunk_width: Option<usize>,
     matrix_extent: usize,
 }
 
-impl FusedQuotientPlan {
+impl<const D: usize> FusedQuotientPlan<'_, D> {
     fn is_one_shot(self) -> bool {
         self.t_chunk_width.is_some_and(|width| width >= self.t_len)
             && self.z_chunk_width.is_some_and(|width| width >= self.z_len)
@@ -83,7 +107,7 @@ where
     F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
-    fn validate(&self, plan: FusedQuotientPlan) -> Result<(), AkitaError> {
+    fn validate(&self, plan: FusedQuotientPlan<'_, D>) -> Result<(), AkitaError> {
         let (cyclic_len, negacyclic_len) = match self {
             Self::Cached { negacyclic, cyclic } => (cyclic.len(), negacyclic.len()),
             Self::Field(source) => (source.len(), source.len()),
@@ -169,19 +193,21 @@ fn fused_quotient_digit_bound(log_basis_outer: u32) -> Result<u64, AkitaError> {
 
 #[allow(clippy::too_many_arguments)]
 fn plan_fused_quotients<
+    'a,
     F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
 >(
     t_hat: &[[i8; D]],
-    z_folded_rings: &[[i32; D]],
+    z_rhs: CenteredRhs<'a, D>,
     n_b: usize,
     n_a: usize,
-    z_folded_max_abs: u32,
     t_digit_abs_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
-) -> Result<FusedQuotientPlan, AkitaError> {
+) -> Result<FusedQuotientPlan<'a, D>, AkitaError> {
+    let z_folded_rings = z_rhs.rows;
+    let z_bounds = z_rhs.bounds;
     let t_len = if n_b != 0 { t_hat.len() } else { 0 };
     let z_len = if n_a != 0 { z_folded_rings.len() } else { 0 };
     if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
@@ -190,11 +216,6 @@ fn plan_fused_quotients<
         ));
     }
 
-    let actual_z_abs_bound = centered_rows_abs_bound(z_folded_rings, z_len);
-    let z_bounds = CenteredRhsBounds {
-        capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
-        lut: actual_z_abs_bound,
-    };
     debug_assert!(
         centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
         "fused quotient centered RHS bound is smaller than the actual max"
@@ -215,7 +236,7 @@ fn plan_fused_quotients<
         z_len,
         max_col: t_len.max(z_len),
         t_digit_abs_bound,
-        z_bounds,
+        z_rhs,
         t_chunk_width,
         z_chunk_width,
         matrix_extent,
@@ -235,8 +256,7 @@ fn fused_split_eq_quotients_with_params<
 >(
     source: FusedMatrixSource<'_, F, W, K, D>,
     t_hat: &[[i8; D]],
-    z_folded_rings: &[[i32; D]],
-    plan: FusedQuotientPlan,
+    plan: FusedQuotientPlan<'_, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     source.validate(plan)?;
@@ -249,11 +269,7 @@ fn fused_split_eq_quotients_with_params<
 
     if plan.is_one_shot() {
         return Ok(fused_split_eq_quotients_one_shot(
-            &source,
-            t_hat,
-            z_folded_rings,
-            plan,
-            params,
+            &source, t_hat, plan, params,
         ));
     }
 
@@ -261,7 +277,7 @@ fn fused_split_eq_quotients_with_params<
         AkitaError::InvalidSetup("CRT parameters cannot represent one t_hat term".to_string())
     })?;
     let b_result = accumulate_cyclic_i8_rows(&source, t_hat, plan, t_chunk_width, params);
-    let a_result = accumulate_centered_quotient_rows(&source, z_folded_rings, plan, params);
+    let a_result = accumulate_centered_quotient_rows(&source, plan, params);
 
     Ok(FusedQuotientRows {
         b_cyclic: b_result,
@@ -277,14 +293,15 @@ fn fused_split_eq_quotients_one_shot<
 >(
     source: &FusedMatrixSource<'_, F, W, K, D>,
     t_hat: &[[i8; D]],
-    z_folded_rings: &[[i32; D]],
-    plan: FusedQuotientPlan,
+    plan: FusedQuotientPlan<'_, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> FusedQuotientRows<F, D> {
+    let z_folded_rings = plan.z_rhs.rows;
     let digit_lut = (plan.t_len != 0)
         .then(|| DigitMontLut::<W, K>::new_with_digit_bound(params, plan.t_digit_abs_bound));
-    let centered_lut = (plan.z_len != 0 && plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
+    let centered_lut = (plan.z_len != 0
+        && plan.z_rhs.bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+    .then(|| CenteredMontLut::<W, K>::new(params, plan.z_rhs.bounds.lut as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let tw = base_tw.min(plan.max_col.div_ceil(MIN_FUSED_TILES).max(1));
     let num_tiles = plan.max_col.div_ceil(tw);
@@ -314,7 +331,7 @@ fn fused_split_eq_quotients_one_shot<
 
                 if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                        // SAFETY: `plan_fused_quotients` computed
+                        // SAFETY: `CenteredRhs::new` computed
                         // `z_bounds.lut` from these `plan.z_len` rows. This
                         // loop keeps `j < plan.z_len`, and `lut` was built for
                         // that inclusive centered coefficient bound.
@@ -401,22 +418,25 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     log_basis_outer: u32,
 ) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     let t_digit_abs_bound = fused_quotient_digit_bound(log_basis_outer)?;
+    let z_rhs = if n_a == 0 {
+        CenteredRhs::new(&[], 0)
+    } else {
+        CenteredRhs::new(z_folded_rings, z_folded_max_abs)
+    };
     macro_rules! run {
         ($params:expr) => {{
             let params = $params;
             let plan = plan_fused_quotients::<F, _, _, D>(
                 t_hat,
-                z_folded_rings,
+                z_rhs,
                 n_b,
                 n_a,
-                z_folded_max_abs,
                 t_digit_abs_bound,
                 &params,
             )?;
             fused_split_eq_quotients_with_params(
                 FusedMatrixSource::Field(source),
                 t_hat,
-                z_folded_rings,
                 plan,
                 &params,
             )
@@ -437,7 +457,7 @@ fn accumulate_cyclic_i8_rows<
 >(
     source: &FusedMatrixSource<'_, F, W, K, D>,
     rhs: &[[i8; D]],
-    plan: FusedQuotientPlan,
+    plan: FusedQuotientPlan<'_, D>,
     chunk_width: usize,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -456,7 +476,7 @@ fn accumulate_cyclic_i8_rows<
         0..num_chunks,
         || vec![CyclotomicRing::<F, D>::zero(); num_rows],
         |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
-            let chunk = FusedQuotientPlan::chunk_range(rhs_len, chunk_width, chunk_idx);
+            let chunk = FusedQuotientPlan::<D>::chunk_range(rhs_len, chunk_width, chunk_idx);
             let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
 
             for j in chunk {
@@ -514,10 +534,10 @@ fn accumulate_centered_quotient_rows<
     const D: usize,
 >(
     source: &FusedMatrixSource<'_, F, W, K, D>,
-    z_folded_rings: &[[i32; D]],
-    plan: FusedQuotientPlan,
+    plan: FusedQuotientPlan<'_, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
+    let z_folded_rings = plan.z_rhs.rows;
     let num_rows = plan.n_a;
     if num_rows == 0 {
         return vec![];
@@ -526,22 +546,22 @@ fn accumulate_centered_quotient_rows<
         return vec![CyclotomicRing::<F, D>::zero(); num_rows];
     }
 
-    if plan.z_bounds.lut == 0 {
+    if plan.z_rhs.bounds.lut == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); num_rows];
     }
 
     let Some(chunk_width) = plan.z_chunk_width else {
-        return accumulate_centered_quotient_rows_field(source, z_folded_rings, plan, params);
+        return accumulate_centered_quotient_rows_field(source, plan, params);
     };
-    let centered_lut = (plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
+    let centered_lut = (plan.z_rhs.bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+        .then(|| CenteredMontLut::<W, K>::new(params, plan.z_rhs.bounds.lut as i32));
     let num_chunks = plan.z_len.div_ceil(chunk_width);
 
     cfg_fold_reduce!(
         0..num_chunks,
         || vec![CyclotomicRing::<F, D>::zero(); num_rows],
         |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
-            let chunk = FusedQuotientPlan::chunk_range(plan.z_len, chunk_width, chunk_idx);
+            let chunk = FusedQuotientPlan::<D>::chunk_range(plan.z_len, chunk_width, chunk_idx);
             let mut neg_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
             let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
 
@@ -550,7 +570,7 @@ fn accumulate_centered_quotient_rows<
                     continue;
                 }
                 let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                    // SAFETY: `plan_fused_quotients` computed
+                    // SAFETY: `CenteredRhs::new` computed
                     // `z_bounds.lut` from these `plan.z_len` rows. This loop
                     // keeps `j < plan.z_len`, and `lut` was built for that
                     // inclusive centered coefficient bound.
@@ -597,10 +617,10 @@ fn accumulate_centered_quotient_rows_field<
     const D: usize,
 >(
     source: &FusedMatrixSource<'_, F, W, K, D>,
-    z_folded_rings: &[[i32; D]],
-    plan: FusedQuotientPlan,
+    plan: FusedQuotientPlan<'_, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
+    let z_folded_rings = plan.z_rhs.rows;
     cfg_into_iter!(0..plan.n_a)
         .map(|row_idx| {
             let mut out = CyclotomicRing::<F, D>::zero();
@@ -631,11 +651,12 @@ fn centered_quotient_rows_with_i16_tail_params<
     tail_neg: &[CyclotomicCrtNtt<i16, 1, D>],
     tail_cyc: &[CyclotomicCrtNtt<i16, 1, D>],
     num_rows: usize,
-    z_folded_rings: &[[i32; D]],
-    z_folded_max_abs: u32,
+    z_rhs: CenteredRhs<'_, D>,
     params: &CrtNttParamSet<i32, K, D>,
     tail_params: &CrtNttParamSet<i16, 1, D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    let z_folded_rings = z_rhs.rows;
+    let z_bounds = z_rhs.bounds;
     if num_rows == 0 {
         return Ok(Vec::new());
     }
@@ -652,24 +673,22 @@ fn centered_quotient_rows_with_i16_tail_params<
             "base-plus-tail quotient cache is shorter than its matrix shape".into(),
         ));
     }
-    let actual_bound = centered_rows_abs_bound(z_folded_rings, width);
-    if actual_bound == 0 {
+    if z_bounds.lut == 0 {
         return Ok(vec![CyclotomicRing::<F, D>::zero(); num_rows]);
     }
-    let capacity_bound = u64::from(z_folded_max_abs).max(actual_bound);
     let capacity = params
         .crt_capacity()
         .with_prime_modulus(tail_params.primes[0].p as u128);
     let chunk_width = capacity
-        .max_safe_width::<F, D>(capacity_bound)
+        .max_safe_width::<F, D>(z_bounds.capacity)
         .map(|safe| safe.min(width))
         .filter(|&safe| safe > 0)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("centered quotient exceeds base plus i16-tail capacity".into())
         })?;
     let mixed_params = I16TailParams::new(params.clone(), tail_params.clone());
-    let base_lut = (actual_bound <= u64::from(CENTERED_LUT_MAX_ABS))
-        .then(|| CenteredMontLut::<i32, K>::new(params, actual_bound as i32));
+    let base_lut = (z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
+        .then(|| CenteredMontLut::<i32, K>::new(params, z_bounds.lut as i32));
     let num_chunks = width.div_ceil(chunk_width);
 
     Ok(cfg_fold_reduce!(
@@ -689,7 +708,7 @@ fn centered_quotient_rows_with_i16_tail_params<
                 }
                 let j = start + offset;
                 let (z_neg, z_cyc) = if let Some(ref lut) = base_lut {
-                    // SAFETY: `actual_bound` bounds every centered coefficient in
+                    // SAFETY: `z_bounds.lut` bounds every centered coefficient in
                     // `z_folded_rings`; the LUT is built for that bound, and `j`
                     // ranges only over the validated `0..width` source rows.
                     unsafe {
@@ -761,8 +780,7 @@ pub(crate) fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding,
     cyclic_slot: &PreparedNttCache<D>,
     tail_slot: &PreparedNttCache<D>,
     num_rows: usize,
-    z_folded_rings: &[[i32; D]],
-    z_folded_max_abs: u32,
+    z_rhs: CenteredRhs<'_, D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let tail = tail_slot.i16_tail_pair().ok_or_else(|| {
         AkitaError::InvalidSetup("paired i16-tail NTT domain not prepared".into())
@@ -785,8 +803,7 @@ pub(crate) fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding,
                 tail.negacyclic(),
                 tail.cyclic(),
                 num_rows,
-                z_folded_rings,
-                z_folded_max_abs,
+                z_rhs,
                 neg_base.params(),
                 tail.params(),
             )
@@ -823,14 +840,18 @@ pub(crate) fn fused_split_eq_quotients<F: Field + CanonicalEncoding, const D: us
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
 ) -> Result<FusedQuotientRows<F, D>, AkitaError> {
+    let z_rhs = if n_a == 0 {
+        CenteredRhs::new(&[], 0)
+    } else {
+        CenteredRhs::new(z_folded_rings, z_folded_max_abs)
+    };
     fused_split_eq_quotients_with_digit_bound(
         slot,
         slot,
         n_b,
         n_a,
         t_hat,
-        z_folded_rings,
-        z_folded_max_abs,
+        z_rhs,
         balanced_digit_abs_bound(6),
     )
 }
@@ -845,8 +866,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     n_b: usize,
     n_a: usize,
     t_hat: &[[i8; D]],
-    z_folded_rings: &[[i32; D]],
-    z_folded_max_abs: u32,
+    z_rhs: CenteredRhs<'_, D>,
     log_basis_outer: u32,
 ) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     let t_digit_abs_bound = fused_quotient_digit_bound(log_basis_outer)?;
@@ -856,8 +876,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         n_b,
         n_a,
         t_hat,
-        z_folded_rings,
-        z_folded_max_abs,
+        z_rhs,
         t_digit_abs_bound,
     )
 }
@@ -869,8 +888,7 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
     n_b: usize,
     n_a: usize,
     t_hat: &[[i8; D]],
-    z_folded_rings: &[[i32; D]],
-    z_folded_max_abs: u32,
+    z_rhs: CenteredRhs<'_, D>,
     t_digit_abs_bound: u64,
 ) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     macro_rules! run {
@@ -896,10 +914,9 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
             let plan = plan_fused_quotients::<F, _, _, D>(
                 t_hat,
-                z_folded_rings,
+                z_rhs,
                 n_b,
                 n_a,
-                z_folded_max_abs,
                 t_digit_abs_bound,
                 params,
             )?;
@@ -909,7 +926,6 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
                     cyclic: cyc,
                 },
                 t_hat,
-                z_folded_rings,
                 plan,
                 params,
             )

@@ -104,9 +104,14 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
     let expected = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
 
     assert_eq!(fused.a_quotients, vec![expected]);
-    let tail_rows =
-        centered_quotient_rows_with_i16_tail::<F, D>(&slot, &slot, &tail, 1, &z_pre, 32_768)
-            .expect("base-plus-tail quotient");
+    let tail_rows = centered_quotient_rows_with_i16_tail::<F, D>(
+        &slot,
+        &slot,
+        &tail,
+        1,
+        CenteredRhs::new(&z_pre, 32_768),
+    )
+    .expect("base-plus-tail quotient");
     assert_eq!(tail_rows, vec![expected]);
 }
 

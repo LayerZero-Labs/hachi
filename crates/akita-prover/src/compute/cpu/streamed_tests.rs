@@ -9,7 +9,7 @@ use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::kernels::linear::{
     digit_relation_rows_cached_prover_bounds, digit_relation_rows_streamed_prover_bounds,
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds,
+    fused_split_eq_quotients_streamed_prover_bounds, CenteredRhs,
 };
 use crate::AkitaProverSetup;
 use akita_error::AkitaError;
@@ -294,8 +294,7 @@ fn streamed_relation_rows_match_cached_kernel() {
                     2,
                     1,
                     &t_hat,
-                    &z_segment,
-                    5,
+                    CenteredRhs::new(&z_segment, 5),
                     3,
                 )
             })
@@ -336,8 +335,7 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
                     2,
                     1,
                     &t_hat,
-                    &z_segment,
-                    5,
+                    CenteredRhs::new(&z_segment, 5),
                     3,
                 )
             })
@@ -399,8 +397,7 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
                     0,
                     1,
                     &[][..],
-                    &z_segment,
-                    z_bound,
+                    CenteredRhs::new(&z_segment, z_bound),
                     1,
                 )
             })
@@ -453,8 +450,7 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
                             1,
                             1,
                             &t_hat,
-                            &z_segment,
-                            3,
+                            CenteredRhs::new(&z_segment, 3),
                             8,
                         )
                     },

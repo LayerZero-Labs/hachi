@@ -49,9 +49,9 @@ pub(crate) use digit_relation::{
     digit_relation_rows_streamed_prover_bounds, DigitRelationRows,
 };
 use digits::*;
-pub(crate) use fused_quotients::centered_quotient_rows_with_i16_tail;
 #[cfg(test)]
 pub(crate) use fused_quotients::fused_split_eq_quotients;
+pub(crate) use fused_quotients::{centered_quotient_rows_with_i16_tail, CenteredRhs};
 pub(crate) use fused_quotients::{
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
     fused_split_eq_quotients_streamed_prover_bounds, FusedQuotientRows,
