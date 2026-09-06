@@ -11,9 +11,9 @@ use crate::{
 
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    dimension_candidates, suffix_opening_layout, FoldCandidatePolicy, RecursiveCandidateGuide,
-    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixSearchCache, SplitBoundPolicy,
-    SuffixCtx, SuffixState,
+    dimension_candidates, suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide,
+    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide,
+    SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -455,16 +455,20 @@ fn inner_route_kind_matches(
     candidate: akita_types::InnerCommitSecurityRoute,
     guide: akita_types::InnerCommitSecurityRoute,
 ) -> bool {
-    matches!(
-        (candidate, guide),
-        (
-            akita_types::InnerCommitSecurityRoute::Linf(_),
-            akita_types::InnerCommitSecurityRoute::Linf(_)
-        ) | (
-            akita_types::InnerCommitSecurityRoute::L2 { .. },
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        )
-    )
+    CandidateInnerRoute::of(candidate) == CandidateInnerRoute::of(guide)
+}
+
+fn candidate_layout_guide(guide: &CommittedGroupParams) -> CandidateLayoutGuide {
+    CandidateLayoutGuide {
+        position_index_bits: guide.blocks().position_index_bits(),
+        outer_slice_count: guide.outer_slice_count(),
+        inner_route: CandidateInnerRoute::of(guide.inner().matrix.security_route()),
+        setup_prefix: guide.setup_prefix().map(|prefix| SetupPrefixLayoutGuide {
+            log_basis_inner: prefix.profile.inner.digits.log_basis,
+            position_index_bits: prefix.profile.blocks.position_index_bits(),
+            outer_slice_count: prefix.profile.outer_slice_count,
+        }),
+    }
 }
 
 fn setup_prefix_structure_matches(
@@ -703,6 +707,7 @@ impl<'a> CandidateDomain<'a> {
                         &work.precommitted_openings,
                         inner_lb,
                         open_lb,
+                        self.root_main_constraint.map(candidate_layout_guide),
                     )?;
                     if let Some(constraint) = self.root_main_constraint {
                         dimension_candidates.retain(|(params, _)| {
@@ -754,18 +759,16 @@ impl<'a> CandidateDomain<'a> {
                     {
                         continue;
                     }
-                    let guide = self
-                        .guide_fold
-                        .map(|guide| RecursiveCandidateGuide {
-                            position_index_bits: guide.blocks().position_index_bits(),
-                            outer_slice_count: guide.outer_slice_count(),
+                    let guide = self.guide_fold.map(candidate_layout_guide).or_else(|| {
+                        self.guide_terminal.map(|guide| CandidateLayoutGuide {
+                            position_index_bits: guide.blocks.position_index_bits(),
+                            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+                            inner_route: CandidateInnerRoute::of(
+                                guide.inner.matrix.security_route(),
+                            ),
+                            setup_prefix: None,
                         })
-                        .or_else(|| {
-                            self.guide_terminal.map(|guide| RecursiveCandidateGuide {
-                                position_index_bits: guide.blocks.position_index_bits(),
-                                outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                            })
-                        });
+                    });
                     let request = RecursiveCandidateRequest {
                         policy,
                         payload_mode,
@@ -901,6 +904,7 @@ impl<'a> CandidateDomain<'a> {
                     &work.precommitted_openings,
                     inner_lb,
                     open_lb,
+                    self.root_main_constraint.map(candidate_layout_guide),
                 )?;
                 if let Some(constraint) = self.root_main_constraint {
                     dimension_candidates.retain(|(params, _)| {

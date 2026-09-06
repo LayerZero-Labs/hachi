@@ -536,6 +536,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &[],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
+        None,
     )
     .expect("root packing candidates");
     assert!(!candidates.is_empty());
@@ -634,6 +635,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &[precommit_opening],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
+        None,
     )
     .expect("group-local packing candidates");
     assert!(!grouped.is_empty());
@@ -677,6 +679,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &[trace_precommit],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
+        None,
     )
     .unwrap()
     .is_empty());
@@ -736,6 +739,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                     product,
                     Dense::inner_basis_range().0,
                     Dense::opening_basis_range().0,
+                    None,
                 )
                 .expect("materialized root candidate domain")
             })
@@ -797,6 +801,105 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn guided_root_slice_survives_grouped_local_pruning() {
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
+    };
+    use akita_types::AkitaScheduleLookupKey;
+
+    let mut policy = policy_of::<Dense>();
+    policy.selection_policy =
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3;
+    let dimensions = CommitmentRingDims {
+        inner: 256,
+        outer: 128,
+        opening: 64,
+    };
+    let opening =
+        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
+            .expect("valid final packing opening")
+            .expect("final packing geometry");
+    let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
+    let scalar = crate::planner::root_level_candidates_for_basis(
+        &scalar_key,
+        honest_fold_policy_of::<Dense>(),
+        &[],
+        &policy,
+        dimensions,
+        opening,
+        &[],
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        None,
+    )
+    .expect("scalar root candidates");
+    let frozen = synthetic_profile(
+        scalar_key.final_group,
+        &scalar.first().expect("scalar root candidate").0,
+    );
+    let grouped_key = AkitaScheduleLookupKey {
+        final_group: scalar_key.final_group,
+        precommitteds: vec![frozen],
+    };
+    let precommit_opening =
+        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
+            .expect("valid precommit packing opening")
+            .expect("precommit packing geometry");
+    let derive = |guide| {
+        crate::planner::root_level_candidates_for_basis(
+            &grouped_key,
+            honest_fold_policy_of::<Dense>(),
+            &[honest_fold_policy_of::<Dense>()],
+            &policy,
+            dimensions,
+            opening,
+            &[precommit_opening],
+            Dense::inner_basis_range().0,
+            Dense::opening_basis_range().0,
+            guide,
+        )
+    };
+    let unguided = derive(None).expect("unguided grouped root candidates");
+    let unguided_layouts = unguided
+        .iter()
+        .map(|(candidate, _)| {
+            (
+                candidate.blocks().position_index_bits(),
+                candidate.outer_slice_count(),
+            )
+        })
+        .collect::<std::collections::HashSet<_>>();
+    let reduced_vars =
+        grouped_key.final_group.num_vars() - dimensions.d_a().trailing_zeros() as usize;
+
+    for position_index_bits in 1..reduced_vars {
+        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            let guide = CandidateLayoutGuide {
+                position_index_bits,
+                outer_slice_count,
+                inner_route: CandidateInnerRoute::Linf,
+                setup_prefix: None,
+            };
+            let guided = derive(Some(guide)).expect("guided grouped root candidate");
+            if !guided.is_empty()
+                && unguided_layouts
+                    .iter()
+                    .any(|(position, _)| *position == position_index_bits)
+                && !unguided_layouts.contains(&(position_index_bits, outer_slice_count))
+            {
+                assert!(guided.iter().all(|(candidate, _)| {
+                    candidate.blocks().position_index_bits() == position_index_bits
+                        && candidate.outer_slice_count() == outer_slice_count
+                }));
+                return;
+            }
+        }
+    }
+    panic!("fixture must contain a feasible root slice outside the grouped local frontier");
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     use akita_config::{
         honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
@@ -824,6 +927,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         &[],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
+        None,
     )
     .expect("standalone precommit candidates");
     let mut tensor_params = pre_candidates
@@ -871,6 +975,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         num_chunks: 1,
         inner_ring_dimension: dimensions.d_a(),
         outer_ring_dimension: dimensions.d_b(),
+        guide: None,
     };
     let trace_groups = derive_setup_prefix_groups(&mut cache, request(trace)).unwrap();
     let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
@@ -948,6 +1053,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             num_chunks: 1,
             inner_ring_dimension: params.d_a(),
             outer_ring_dimension: params.outer().matrix.ring_dimension(),
+            guide: None,
         },
     )
     .expect("setup-prefix candidates")
@@ -1025,6 +1131,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
                 num_chunks: 1,
                 inner_ring_dimension: 64,
                 outer_ring_dimension: 64,
+                guide: None,
             },
         )
         .expect("setup-prefix frontier");

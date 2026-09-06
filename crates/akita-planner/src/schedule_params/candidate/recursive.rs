@@ -38,11 +38,35 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     /// Optional structural replay constraint. Current lengths and security
     /// ranks are still derived; only the approved split and slicing remain.
-    pub(crate) guide: Option<RecursiveCandidateGuide>,
+    pub(crate) guide: Option<CandidateLayoutGuide>,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RecursiveCandidateGuide {
+pub(crate) struct CandidateLayoutGuide {
+    pub(crate) position_index_bits: usize,
+    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) inner_route: CandidateInnerRoute,
+    pub(crate) setup_prefix: Option<SetupPrefixLayoutGuide>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CandidateInnerRoute {
+    Linf,
+    L2,
+}
+
+impl CandidateInnerRoute {
+    pub(crate) const fn of(route: akita_types::InnerCommitSecurityRoute) -> Self {
+        match route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
+            akita_types::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SetupPrefixLayoutGuide {
+    pub(crate) log_basis_inner: u32,
     pub(crate) position_index_bits: usize,
     pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
 }
@@ -557,6 +581,12 @@ fn append_selective_l2_candidates(
     if !policy.selective_l2_response_model_enabled() {
         return Ok(());
     }
+    if request
+        .guide
+        .is_some_and(|guide| guide.inner_route == CandidateInnerRoute::Linf)
+    {
+        return Ok(());
+    }
     let (Some((block_index_bits, _, _)), Some(source_moment)) = (best_modeled, source_moment)
     else {
         return Ok(());
@@ -623,7 +653,7 @@ fn append_selective_l2_candidates(
     else {
         return Ok(());
     };
-    if inner_commit_matrix.output_rank() >= linf_rank {
+    if request.guide.is_none() && inner_commit_matrix.output_rank() >= linf_rank {
         return Ok(());
     }
     l2_core.inner_commit_matrix = inner_commit_matrix;

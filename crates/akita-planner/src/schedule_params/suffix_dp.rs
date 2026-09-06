@@ -16,11 +16,11 @@ use crate::PlannerPolicy;
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
-    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
-    CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateGuide,
+    terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
-    SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
+    SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -525,6 +525,9 @@ fn price_terminal_candidate(
         state.level,
         None,
         state.source_moment,
+        ctx.adaptation_guide.map(|schedule| {
+            CandidateInnerRoute::of(schedule.terminal.inner.matrix.security_route())
+        }),
     )?
     else {
         return Ok(());

@@ -105,9 +105,11 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
         .find(|split| !bounded.contains(split))
         .expect("bounded domain must omit a split");
     let request = RecursiveCandidateRequest {
-        guide: Some(RecursiveCandidateGuide {
+        guide: Some(CandidateLayoutGuide {
             position_index_bits: search.reduced_vars - guided_split,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+            inner_route: CandidateInnerRoute::Linf,
+            setup_prefix: None,
         }),
         ..base_request
     };
@@ -129,6 +131,96 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
         )
         .expect("guided split walk");
     assert_eq!(admitted, vec![guided_split]);
+}
+
+#[test]
+fn guided_recursive_l2_survives_the_profitability_filter() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::InnerCommitSecurityRoute;
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    for source_bound in [
+        1_000,
+        10_000,
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+        1_000_000_000,
+        10_000_000_000,
+        100_000_000_000,
+        1_000_000_000_000,
+    ] {
+        for log_basis in 2..=8 {
+            let request = RecursiveCandidateRequest {
+                policy: &policy,
+                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                opening: PlannerOpeningCandidate::evaluation_trace(
+                    Recursive::ring_challenge_config(64).expect("challenge config"),
+                ),
+                dimensions: CommitmentRingDims::uniform(64),
+                current_witness_len: 948_672,
+                source: crate::InnerBasisSource::BalancedDigits { log_basis },
+                log_basis_inner: log_basis,
+                log_basis_open: log_basis,
+                fold_level: 3,
+                source_moment: crate::response_model::SourceMomentEstimate::new(source_bound),
+                relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
+            };
+            let linf_candidates = derive_fold_candidates(
+                request,
+                RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
+                FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled),
+            )
+            .expect("unguided recursive candidates");
+            for (linf, _) in linf_candidates.iter().filter(|(candidate, _)| {
+                matches!(
+                    candidate.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::Linf(_)
+                )
+            }) {
+                let guided_request = RecursiveCandidateRequest {
+                    guide: Some(CandidateLayoutGuide {
+                        position_index_bits: linf.blocks().position_index_bits(),
+                        outer_slice_count: linf.outer_slice_count(),
+                        inner_route: CandidateInnerRoute::L2,
+                        setup_prefix: None,
+                    }),
+                    ..request
+                };
+                let guided = derive_fold_candidates(
+                    guided_request,
+                    RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
+                    FoldCandidatePolicy::Best,
+                )
+                .expect("guided recursive candidates");
+                let guided_linf_rank = guided.iter().find_map(|(candidate, _)| {
+                    matches!(
+                        candidate.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::Linf(_)
+                    )
+                    .then_some(candidate.inner().matrix.output_rank())
+                });
+                let guided_l2_rank = guided.iter().find_map(|(candidate, _)| {
+                    matches!(
+                        candidate.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::L2 { .. }
+                    )
+                    .then_some(candidate.inner().matrix.output_rank())
+                });
+                if let (Some(linf_rank), Some(l2_rank)) = (guided_linf_rank, guided_l2_rank) {
+                    if l2_rank >= linf_rank {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    panic!("fixture must contain a feasible L2 route that is not the greedy rank winner");
 }
 
 #[test]

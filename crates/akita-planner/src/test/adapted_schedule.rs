@@ -64,6 +64,10 @@ fn assert_frozen_skeleton(main: &akita_types::FoldSchedule, adapted: &akita_type
         assert_eq!(adapted.params.source_encoding, main.params.source_encoding);
         assert_eq!(adapted.params.witness_chunk, main.params.witness_chunk);
         assert_eq!(
+            std::mem::discriminant(&adapted.params.inner().matrix.security_route()),
+            std::mem::discriminant(&main.params.inner().matrix.security_route())
+        );
+        assert_eq!(
             adapted.params.setup_prefix().is_some(),
             main.params.setup_prefix().is_some()
         );
@@ -110,6 +114,14 @@ fn assert_frozen_skeleton(main: &akita_types::FoldSchedule, adapted: &akita_type
     assert_eq!(
         adapted.terminal.fold.log_basis,
         main.terminal.fold.log_basis
+    );
+    assert_eq!(
+        adapted.terminal.fold_challenge_config,
+        main.terminal.fold_challenge_config
+    );
+    assert_eq!(
+        std::mem::discriminant(&adapted.terminal.inner.matrix.security_route()),
+        std::mem::discriminant(&main.terminal.inner.matrix.security_route())
     );
 }
 

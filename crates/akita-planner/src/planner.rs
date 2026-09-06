@@ -287,6 +287,7 @@ pub(crate) fn root_level_candidates_for_basis(
     precommitted_openings: &[PlannerOpeningCandidate],
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
+    guide: Option<crate::schedule_params::CandidateLayoutGuide>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
@@ -343,15 +344,22 @@ pub(crate) fn root_level_candidates_for_basis(
         log_basis: candidate_log_basis_open,
         ..policy.decomposition
     });
-    let mut split_domain = recursive_split_search_domain(
-        policy.recursive_split_search_policy,
-        num_ring_elems,
-        reduced_vars,
-        delta_commit,
-        delta_open,
-        policy.chunks_at_level(0),
-    );
-    if min_block_index_bits == 0 {
+    let mut split_domain = if let Some(guide) = guide {
+        reduced_vars
+            .checked_sub(guide.position_index_bits)
+            .into_iter()
+            .collect()
+    } else {
+        recursive_split_search_domain(
+            policy.recursive_split_search_policy,
+            num_ring_elems,
+            reduced_vars,
+            delta_commit,
+            delta_open,
+            policy.chunks_at_level(0),
+        )
+    };
+    if guide.is_none() && min_block_index_bits == 0 {
         split_domain.push(0);
     }
     split_domain.retain(|&split| min_block_index_bits <= split && split <= max_block_index_bits);
@@ -383,6 +391,9 @@ pub(crate) fn root_level_candidates_for_basis(
         let num_live_blocks = 1usize << block_index_bits;
         let mut slice_candidates = Vec::new();
         for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if guide.is_some_and(|guide| outer_slice_count != guide.outer_slice_count) {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     0,
