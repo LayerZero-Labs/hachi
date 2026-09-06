@@ -3,15 +3,78 @@ use super::rotated_accum::{
 };
 use super::{
     balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
-    decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16,
-    sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar, sparse_mul_acc_pm1, sparse_mul_acc_scalar,
-    DecomposeParams,
+    decompose_ring_interleaved, decompose_ring_interleaved_i16, fill_rotated_challenge,
+    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar,
+    sparse_mul_acc_pm1, sparse_mul_acc_scalar, DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_types::sis::compute_num_digits_field_width;
 use jolt_field::CanonicalEncoding;
 use jolt_field::{Fp64, One, Prime128Offset275, Ring, Zero};
+
+#[test]
+fn fp64_i16_interleaved_decomposition_matches_centered_recurrence() {
+    use jolt_field::Prime64Offset59;
+
+    type F = Prime64Offset59;
+    const D: usize = 64;
+    const NUM_DIGITS: usize = 4;
+    const LOG_BASIS: u32 = 16;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Fp64 values fit in u128")
+        + 1;
+    let threshold =
+        akita_algebra::ring::cyclotomic::decompose_centering_threshold(NUM_DIGITS, LOG_BASIS, q);
+    let params = DecomposeParams {
+        threshold,
+        q,
+        mask: (1i128 << LOG_BASIS) - 1,
+        half_b: 1i128 << (LOG_BASIS - 1),
+        b_val: 1i128 << LOG_BASIS,
+        log_basis: LOG_BASIS,
+        overflow_possible: false,
+    };
+    let values = [
+        0,
+        1,
+        32_767,
+        32_768,
+        threshold.saturating_sub(1),
+        threshold,
+        threshold + 1,
+        q - i64::MAX as u128 - 1,
+        q - i64::MAX as u128,
+        q - 65_536,
+        q - 32_768,
+        q - 1,
+    ];
+    let ring = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+        F::from_u128_reduced(values[index % values.len()])
+    }));
+    let mut actual = vec![[0i16; D]; NUM_DIGITS];
+    decompose_ring_interleaved_i16(&ring, &mut actual, NUM_DIGITS, &params);
+
+    for (coefficient, value) in ring.coeffs.iter().enumerate() {
+        let canonical = value.to_u128_checked().expect("Fp64 values fit in u128");
+        let mut carry = if canonical > threshold {
+            -((q - canonical) as i128)
+        } else {
+            canonical as i128
+        };
+        for plane in &actual {
+            let raw = carry & params.mask;
+            let digit = if raw >= params.half_b {
+                raw - params.b_val
+            } else {
+                raw
+            };
+            assert_eq!(i128::from(plane[coefficient]), digit);
+            carry = (carry - digit) >> LOG_BASIS;
+        }
+    }
+}
 
 #[test]
 fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {

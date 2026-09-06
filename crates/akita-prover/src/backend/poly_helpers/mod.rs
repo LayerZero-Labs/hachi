@@ -15,7 +15,7 @@ pub use decompose_fold_partitioned::{
 
 use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
-use akita_algebra::ring::cyclotomic::try_balanced_decompose_coefficients_pow2_i8_u64_into;
+use akita_algebra::ring::cyclotomic::try_balanced_decompose_coefficients_pow2_u64_into;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -78,7 +78,7 @@ pub fn decompose_ring_interleaved<F: Field + CanonicalEncoding, const D: usize>(
     num_digits: usize,
     p: &DecomposeParams,
 ) {
-    if try_balanced_decompose_coefficients_pow2_i8_u64_into(
+    if try_balanced_decompose_coefficients_pow2_u64_into(
         &ring.coeffs,
         digit_buf[..num_digits].as_flattened_mut(),
         num_digits,
@@ -103,6 +103,16 @@ pub fn decompose_ring_interleaved_i16<F: Field + CanonicalEncoding, const D: usi
     num_digits: usize,
     p: &DecomposeParams,
 ) {
+    if try_balanced_decompose_coefficients_pow2_u64_into(
+        &ring.coeffs,
+        digit_buf[..num_digits].as_flattened_mut(),
+        num_digits,
+        p.log_basis,
+        p.q,
+        p.threshold,
+    ) {
+        return;
+    }
     let bulk_end = D - (D % 3);
     for base in (0..bulk_end).step_by(3) {
         let canonical = [
