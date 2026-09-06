@@ -15,12 +15,14 @@ decision, algebra, feature matrix, eligibility state machine, and compatibility
 boundary; this companion owns the cross-crate architecture and executable
 acceptance contract.
 
-Acceptance status was re-audited against PR #466 on 2026-09-04. The exact
-code-and-evidence head is `04111dedf`; merge `5fd356d0c` then incorporates the
-documentation-only main commit `f9f7de87b` without changing protocol code or
-measurements. Checked boxes below have a concrete implementation and regression
-test, generated artifact, or pinned benchmark record. Remaining work, if any,
-must be stated explicitly rather than inherited from the closed #445 review.
+Acceptance status was re-audited against PR #466 on 2026-09-06. The exact
+code-and-evidence head is `a890d7bfb`. This audit includes the planner relation
+state simplification, schedule and witness-tail validation changes, prover and
+verifier plumbing cleanup, phase-evidence hardening, and documentation guards
+landed after `04111dedf`. Checked boxes below have a concrete implementation and
+regression test, generated artifact, or pinned benchmark record. Remaining work,
+if any, must be stated explicitly rather than inherited from the closed #445
+review.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -690,8 +692,8 @@ feature is accepted.
       review evidence, not compatibility baselines.
 - [x] Serialize representative proofs and confirm that measured sizes remain
       within the generated proof estimates. Profile benchmark run
-      [33823315475](https://github.com/LayerZero-Labs/akita/actions/runs/33823315475)
-      completed all 13 production cases at review head `1d2800432`; the runtime
+      [33929714113](https://github.com/LayerZero-Labs/akita/actions/runs/33929714113)
+      completed all 13 production cases at review head `bb68275e9`; the runtime
       harness serializes each proof and rejects any result above its planned
       byte count.
 - [x] Report representative planner wall time, peak resident memory, and
@@ -699,7 +701,9 @@ feature is accepted.
       evidence report compares release binaries for dense fp32/fp64/fp128 rows
       and records wall time, maximum RSS, per-phase suffix and memo counts,
       transition and rejection counts, peak memo occupancy, candidates, and
-      selected cutovers at code-and-evidence head `04111dedf`.
+      selected cutovers at code-and-evidence head `a890d7bfb`. The final-head
+      counters and selected schedules match the earlier `04111dedf` capture;
+      fresh sequential wall/RSS measurements are recorded in PR #466.
 
 For quotient-free-tail acceptance, exact generated rows, cutovers, witness
 lengths, and proof byte counts MUST NOT be checked in as golden evidence. They

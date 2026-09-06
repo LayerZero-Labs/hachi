@@ -10,16 +10,19 @@ semantics.
 
 ## Current audit status
 
-As of 2026-09-04, slices 0 through 9 are present and re-audited in PR #466 at
-code-and-evidence head `04111dedf`, followed by documentation-only main merge
-`5fd356d0c`. The mode is bound, layouts omit both ordinary and compression
-quotients, shared residue algebra drives the prover and verifier, production
-proofs exercise eligible reduced suffixes, and the exact planner emits reduced
-external artifact rows. Cross-mode replay, small-field reduced EOR, reversed traversal,
-production-profile verifier phase timing, the bounded malformed-input matrix,
-serialized-proof agreement, and planner telemetry are complete. The external
-catalogs and durable Book explanations are present. Aggregate base/head evidence
-belongs in the PR rather than a checked compatibility snapshot.
+As of 2026-09-06, slices 0 through 9 are present and re-audited in PR #466 at
+code-and-evidence head `a890d7bfb`. The audit includes the post-`04111dedf`
+planner relation-state simplification, schedule validation, witness-tail
+construction, prover/verifier plumbing, relation-phase evidence checks, and
+documentation guards. The mode is bound, layouts omit both ordinary and
+compression quotients, shared residue algebra drives the prover and verifier,
+production proofs exercise eligible reduced suffixes, and the exact planner
+emits reduced external artifact rows. Cross-mode replay, small-field reduced EOR,
+reversed traversal, production-profile verifier phase timing, the bounded
+malformed-input matrix, serialized-proof agreement, and final-head planner
+telemetry are complete. The external catalogs and durable Book explanations
+are present. Aggregate base/head evidence belongs in the PR rather than a
+checked compatibility snapshot.
 
 This distinction is intentional: the protocol feature is implemented, while
 the record remains `active` until its stated validation and evidence gates are
@@ -144,9 +147,9 @@ acceptance. They MUST preserve the shared algebra oracle and verifier equation.
 
 PR [#466](https://github.com/LayerZero-Labs/akita/pull/466) replaces closed,
 unmerged PR #445. Review checkpoint `1d2800432` contained the 127-commit
-restack from merge base `26bdbac79`; the 2026-09-04 re-audit additionally
-covers evidence fix `04111dedf` and documentation-only main merge
-`5fd356d0c`.
+restack from merge base `26bdbac79`; the 2026-09-06 re-audit now covers every
+later implementation and evidence change through `a890d7bfb` against merge
+base `f9f7de87b`.
 
 PR #466 targets `main` directly. It is not an active stack on #448, #444, or
 #445, and those historical branch heads must not be used as its current
@@ -162,40 +165,28 @@ history and the closed PR; repeating them here would make a stale stack look
 normative.
 
 Concurrent work such as certified planner documentation and grouped planner
-changes remains an integration surface only.
-If any of it lands before #466, refresh from main and re-run the affected
-descriptor, planner, external-catalog, and verifier gates.
+changes remains an integration surface only. Refresh from main and re-run the
+affected descriptor, planner, external-catalog, and verifier gates before those
+changes land.
 
 ### Current branch shape
 
 ```text
-main @ f9f7de87b
-  -> #466 protocol/type, algebra, prover, verifier, and exact planner
-  -> relation-aware schedule planning and Book harmonization
-  -> relation-aware profile and planner evidence @ 04111dedf
-  -> main documentation merge @ 5fd356d0c
-  `-> final #466 audit record @ eb544ff28
+main @ d1b224d80 (squash merge of #466)
+  `-> codex/trusted-schedule-artifacts (PR #428)
+      `-> external artifact ownership and regenerated `.aks` catalogs
 ```
 
 ### Trusted schedule artifacts PR 428
 
 PR [#428](https://github.com/LayerZero-Labs/akita/pull/428) removes compiled
-schedule rows in favor of explicitly supplied trusted artifacts. This combined
-branch is stacked on the current PR #466 quotient-free head `eb544ff28`; it
-serializes the full relation-aware `FoldSchedule` in each external row,
-validates rows at admission, and uses one scheme-owned catalog for setup,
-proving, and verification. No generated Rust row schema or ambient resolver
-remains.
+schedule rows in favor of explicitly supplied trusted artifacts. It is stacked
+on the merged PR #466 result `d1b224d80`, serializes the full relation-aware
+`FoldSchedule` in each external row, validates rows at admission, and uses one
+scheme-owned catalog for setup, proving, and verification. No generated Rust
+row schema or ambient resolver remains.
 
-```text
-codex/quotient-free-tail-relations @ eb544ff28
-  `-> codex/trusted-schedule-artifacts (PR #428)
-      `-> external artifact ownership and regenerated `.aks` catalogs
-```
-
-Keep later implementation changes as reviewable commits on #466 and merge
-current main normally. Do not reconstruct the obsolete #448 -> #444 -> #445
-stack.
+Do not reconstruct the obsolete #448 -> #444 -> #445 stack.
 
 ## Documentation plan
 

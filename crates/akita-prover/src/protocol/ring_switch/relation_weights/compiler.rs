@@ -584,38 +584,36 @@ impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
     }
 }
 
-pub(super) struct EAddress<E> {
-    pub(super) physical_start: usize,
-    pub(super) challenge_index: usize,
-    pub(super) role_subcolumn: usize,
-    pub(super) setup_column: usize,
-    pub(super) constraint_scale: E,
-}
-
-pub(super) struct TAddress<E> {
-    pub(super) physical_start: usize,
-    pub(super) challenge_index: usize,
-    pub(super) role_subcolumn: usize,
-    pub(super) slice_index: usize,
-    pub(super) setup_column: usize,
-    pub(super) constraint_scale: E,
-}
-
-pub(super) struct ZAddress<E> {
-    pub(super) physical_start: usize,
-    pub(super) position: usize,
-    pub(super) setup_column: usize,
-    pub(super) constraint_scale: E,
-    pub(super) setup_scale: E,
-}
-
 pub(super) trait EtWeightSink<E> {
-    fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError>;
-    fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError>;
+    fn add_e(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError>;
+
+    fn add_t(
+        &mut self,
+        physical_start: usize,
+        challenge_index: usize,
+        role_subcolumn: usize,
+        slice_index: usize,
+        setup_column: usize,
+        constraint_scale: E,
+    ) -> Result<(), AkitaError>;
 }
 
 pub(super) trait ZWeightSink<E> {
-    fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError>;
+    fn add_z(
+        &mut self,
+        physical_start: usize,
+        position: usize,
+        setup_column: usize,
+        constraint_scale: E,
+        setup_scale: E,
+    ) -> Result<(), AkitaError>;
 }
 
 pub(super) fn compile_group_et_addresses<E: Field>(
@@ -651,13 +649,13 @@ pub(super) fn compile_group_et_addresses<E: Field>(
                         .and_then(|base| base.checked_mul(plan.witness.depth_open))
                         .and_then(|base| base.checked_add(digit))
                         .ok_or(AkitaError::InvalidProof)?;
-                    sink.add_e(EAddress {
+                    sink.add_e(
                         physical_start,
                         challenge_index,
                         role_subcolumn,
                         setup_column,
-                        constraint_scale: plan.rows.consistency_weight * gadget,
-                    })?;
+                        plan.rows.consistency_weight * gadget,
+                    )?;
                 }
             }
             for a_row in 0..plan.witness.n_a {
@@ -695,14 +693,14 @@ pub(super) fn compile_group_et_addresses<E: Field>(
                             digit,
                             0,
                         )?;
-                        sink.add_t(TAddress {
+                        sink.add_t(
                             physical_start,
                             challenge_index,
                             role_subcolumn,
                             slice_index,
                             setup_column,
-                            constraint_scale: plan.rows.a_row_weights[a_row] * gadget,
-                        })?;
+                            plan.rows.a_row_weights[a_row] * gadget,
+                        )?;
                     }
                 }
             }
@@ -724,8 +722,8 @@ pub(super) fn compile_group_z_addresses<E: Field>(
                     .and_then(|base| base.checked_add(witness_digit))
                     .ok_or(AkitaError::InvalidProof)?;
                 for (fold_digit, &fold_scale) in plan.gadgets.fold_gadget.iter().enumerate() {
-                    sink.add_z(ZAddress {
-                        physical_start: unit.z_coefficient_index(
+                    sink.add_z(
+                        unit.z_coefficient_index(
                             plan.roles.d_a,
                             plan.witness.num_positions,
                             plan.witness.depth_witness,
@@ -737,11 +735,9 @@ pub(super) fn compile_group_z_addresses<E: Field>(
                         )?,
                         position,
                         setup_column,
-                        constraint_scale: -(plan.rows.consistency_weight
-                            * witness_scale
-                            * fold_scale),
-                        setup_scale: -fold_scale,
-                    })?;
+                        -(plan.rows.consistency_weight * witness_scale * fold_scale),
+                        -fold_scale,
+                    )?;
                 }
             }
         }

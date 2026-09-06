@@ -44,9 +44,11 @@ pub enum RingRelationMode {
 opening, or Fiat–Shamir challenge. It changes the public relation weights and
 deletes relation-quotient digits from the committed witness.
 
-Implementation re-audit (2026-09-04): the protocol, layout, prover, verifier,
+Implementation re-audit (2026-09-06): the protocol, layout, prover, verifier,
 and planner paths described here are implemented in PR #466, with code and
-evidence pinned at `04111dedf` and the main documentation sync at `5fd356d0c`.
+evidence pinned at `a890d7bfb`. The re-audit includes the later planner state,
+schedule validation, witness-tail, prover/verifier, phase-evidence, and
+documentation-guard changes rather than treating them as documentation-only.
 Full cross-mode replay, relation-mode traversal invariance, small-field
 reduced/EOR coverage, production-profile phase timing, bounded malformed-input
 coverage, serialized-proof agreement, and planner telemetry are present. The
