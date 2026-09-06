@@ -453,12 +453,6 @@ where
                 )
             }
         )?;
-        let commitment_rows = RingVec::from_coeffs(
-            commitment_payloads
-                .iter()
-                .flat_map(|payload| payload.coeffs().iter().copied())
-                .collect(),
-        );
         let relation_rhs = if prepared.lp.payload_mode.is_compressed() {
             let group_payloads = commitment_payloads
                 .iter()
@@ -470,6 +464,12 @@ where
                 prepared.opening_payload.coeffs(),
             )?
         } else {
+            let commitment_rows = RingVec::from_coeffs(
+                commitment_payloads
+                    .iter()
+                    .flat_map(|payload| payload.coeffs().iter().copied())
+                    .collect(),
+            );
             assemble_relation_rhs::<F>(
                 relation_rhs_layout,
                 &prepared.opening_payload,
