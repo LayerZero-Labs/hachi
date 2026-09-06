@@ -97,7 +97,18 @@ fn balanced_digit_to_field<F: CanonicalEncoding>(digit: i128, q: u128) -> F {
     }
 }
 
-trait BalancedSignedDigit: Copy + Default {
+mod balanced_signed_digit_seal {
+    pub trait Sealed {}
+    impl Sealed for i8 {}
+    impl Sealed for i16 {}
+}
+
+/// Signed integer storage supported by native-width balanced decomposition.
+///
+/// This trait is sealed to the digit types whose full balanced ranges are
+/// validated by the decomposition kernel.
+#[doc(hidden)]
+pub trait BalancedSignedDigit: balanced_signed_digit_seal::Sealed + Copy + Default {
     const MAX_LOG_BASIS: u32;
     fn from_i128(value: i128) -> Self;
 }
@@ -228,7 +239,7 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
             }
         }
     }
-    if try_balanced_decompose_coefficients_pow2_i8_u64_into(
+    if try_balanced_decompose_coefficients_pow2_u64_into(
         coefficients,
         out,
         params.levels,
@@ -241,22 +252,159 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
     balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
 }
 
+/// Decompose flat field coefficients into digit-major signed `i16` values.
+///
+/// The output layout and parameter contract match
+/// [`balanced_decompose_coefficients_pow2_i8_into`].
+#[inline]
+fn balanced_decompose_coefficients_pow2_i16_into<F: CanonicalEncoding>(
+    coefficients: &[F],
+    out: &mut [i16],
+    params: &BalancedDecomposePow2Params,
+) {
+    let expected_len = coefficients
+        .len()
+        .checked_mul(params.levels)
+        .expect("flat digit output length overflow");
+    assert_eq!(
+        out.len(),
+        expected_len,
+        "flat digit output length must match coefficients * levels",
+    );
+    if try_balanced_decompose_coefficients_pow2_u64_into(
+        coefficients,
+        out,
+        params.levels,
+        params.log_basis,
+        params.q,
+        params.threshold,
+    ) {
+        return;
+    }
+    if params.log_basis == 16 {
+        balanced_decompose_coefficients_pow2_i16_b16_into(coefficients, out, params);
+        return;
+    }
+    balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
+}
+
+#[inline(always)]
+fn extract_balanced_digit_b16(carry: &mut i128) -> i16 {
+    let digit = *carry as i16;
+    *carry = (*carry >> 16) + if digit < 0 { 1 } else { 0 };
+    digit
+}
+
+#[inline]
+fn balanced_decompose_coefficients_pow2_i16_b16_into<F: CanonicalEncoding>(
+    coefficients: &[F],
+    out: &mut [i16],
+    params: &BalancedDecomposePow2Params,
+) {
+    let width = coefficients.len();
+    if width == 0 || params.levels == 0 {
+        return;
+    }
+
+    let bulk_end = width - (width % 4);
+    if params.overflow_possible {
+        let (first_plane, remaining) = out.split_at_mut(width);
+        for base in (0..bulk_end).step_by(4) {
+            let mut carries = [0i128; 4];
+            for lane in 0..4 {
+                let canonical = coefficients[base + lane]
+                    .to_u128_checked()
+                    .expect("Akita field element must fit in u128");
+                let (carry, digit) = peel_first_balanced_digit(
+                    canonical,
+                    params.q,
+                    params.threshold,
+                    params.mask,
+                    params.half_b,
+                    params.b,
+                    16,
+                );
+                carries[lane] = carry;
+                first_plane[base + lane] = digit as i16;
+            }
+            for plane in remaining.chunks_exact_mut(width) {
+                for lane in 0..4 {
+                    plane[base + lane] = extract_balanced_digit_b16(&mut carries[lane]);
+                }
+            }
+        }
+        for coefficient in bulk_end..width {
+            let canonical = coefficients[coefficient]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128");
+            let (mut carry, digit) = peel_first_balanced_digit(
+                canonical,
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                16,
+            );
+            first_plane[coefficient] = digit as i16;
+            for plane in remaining.chunks_exact_mut(width) {
+                plane[coefficient] = extract_balanced_digit_b16(&mut carry);
+            }
+        }
+        return;
+    }
+
+    for base in (0..bulk_end).step_by(4) {
+        let mut carries: [i128; 4] = std::array::from_fn(|lane| {
+            let canonical = coefficients[base + lane]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128");
+            if canonical > params.threshold {
+                -((params.q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+        for plane in out.chunks_exact_mut(width) {
+            for lane in 0..4 {
+                plane[base + lane] = extract_balanced_digit_b16(&mut carries[lane]);
+            }
+        }
+    }
+    for coefficient in bulk_end..width {
+        let canonical = coefficients[coefficient]
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
+        let mut carry = if canonical > params.threshold {
+            -((params.q - canonical) as i128)
+        } else {
+            canonical as i128
+        };
+        for plane in out.chunks_exact_mut(width) {
+            plane[coefficient] = extract_balanced_digit_b16(&mut carry);
+        }
+    }
+}
+
 /// Try to decompose canonically stored `u64` field coefficients with
 /// native-width carries.
 ///
 /// The output is digit-major. The function returns `false` without modifying
-/// `out` when the field does not expose canonical `u64` storage or the centered
-/// modulus interval does not fit in `i64`. Callers can then use the general
-/// `u128`/`i128` decomposition path.
+/// `out` when the field does not expose canonical `u64` storage or the first
+/// balanced digit cannot reduce every centered representative to an `i64`
+/// carry. Callers can then use the general `u128`/`i128` decomposition path.
 ///
 /// # Panics
 ///
 /// Panics if `out.len() != coefficients.len() * levels`, or if `log_basis` is
-/// outside `1..=8`.
+/// outside the balanced range supported by `T`.
 #[inline]
-pub fn try_balanced_decompose_coefficients_pow2_i8_u64_into<F: CanonicalEncoding>(
+pub fn try_balanced_decompose_coefficients_pow2_u64_into<
+    F: CanonicalEncoding,
+    T: BalancedSignedDigit,
+>(
     coefficients: &[F],
-    out: &mut [i8],
+    out: &mut [T],
     levels: usize,
     log_basis: u32,
     q: u128,
@@ -272,8 +420,8 @@ pub fn try_balanced_decompose_coefficients_pow2_i8_u64_into<F: CanonicalEncoding
         "flat digit output length must match coefficients * levels",
     );
     assert!(
-        (1..=8).contains(&log_basis),
-        "log_basis must be in 1..=8 for i8 output"
+        (1..=T::MAX_LOG_BASIS).contains(&log_basis),
+        "log_basis exceeds signed digit output width"
     );
     if coefficients.is_empty() || levels == 0 {
         return true;
@@ -289,56 +437,157 @@ pub fn try_balanced_decompose_coefficients_pow2_i8_u64_into<F: CanonicalEncoding
     let Ok(threshold) = u64::try_from(threshold) else {
         return false;
     };
-    if threshold > i64::MAX as u64 || q.saturating_sub(threshold) > i64::MAX as u64 {
+    if threshold > i64::MAX as u64 {
         return false;
     }
 
     let half_b = 1i64 << (log_basis - 1);
     let b = half_b << 1;
     let mask = b - 1;
+    let max_negative_magnitude = q.saturating_sub(threshold.saturating_add(1));
+    let Some(max_adjusted_magnitude) = max_negative_magnitude.checked_add((half_b - 1) as u64)
+    else {
+        return false;
+    };
+    if max_adjusted_magnitude >> log_basis > i64::MAX as u64 {
+        return false;
+    }
     let width = coefficients.len();
     let bulk_end = width - (width % 4);
 
     #[inline(always)]
-    fn center(canonical: u64, q: u64, threshold: u64) -> i64 {
-        if canonical > threshold {
-            -((q - canonical) as i64)
-        } else {
-            canonical as i64
+    fn peel_first(
+        canonical: u64,
+        q: u64,
+        threshold: u64,
+        mask: i64,
+        half_b: i64,
+        b: i64,
+        log_basis: u32,
+    ) -> (i64, i64) {
+        if canonical <= threshold {
+            let mut carry = canonical as i64;
+            let digit = extract(&mut carry, mask, half_b, b, log_basis);
+            return (carry, digit);
         }
+
+        let diff = q - canonical;
+        if diff <= i64::MAX as u64 {
+            let mut carry = -(diff as i64);
+            let digit = extract(&mut carry, mask, half_b, b, log_basis);
+            return (carry, digit);
+        }
+
+        let raw = canonical.wrapping_sub(q) & mask as u64;
+        let digit = if raw >= half_b as u64 {
+            raw as i64 - b
+        } else {
+            raw as i64
+        };
+        let adjusted = if digit >= 0 {
+            diff + digit as u64
+        } else {
+            diff - digit.unsigned_abs()
+        };
+        debug_assert_eq!(adjusted & mask as u64, 0);
+        (-((adjusted >> log_basis) as i64), digit)
     }
 
     #[inline(always)]
-    fn extract(carry: &mut i64, mask: i64, half_b: i64, b: i64, log_basis: u32) -> i8 {
+    fn extract(carry: &mut i64, mask: i64, half_b: i64, b: i64, log_basis: u32) -> i64 {
         let raw = *carry & mask;
         if raw >= half_b {
             *carry = (*carry >> log_basis) + 1;
-            (raw - b) as i8
+            raw - b
         } else {
             *carry >>= log_basis;
-            raw as i8
+            raw
         }
     }
 
+    if q.saturating_sub(threshold) <= i64::MAX as u64 {
+        #[inline(always)]
+        fn center(canonical: u64, q: u64, threshold: u64) -> i64 {
+            if canonical > threshold {
+                -((q - canonical) as i64)
+            } else {
+                canonical as i64
+            }
+        }
+
+        for base in (0..bulk_end).step_by(4) {
+            let mut carries = [
+                center(coefficients[base], q, threshold),
+                center(coefficients[base + 1], q, threshold),
+                center(coefficients[base + 2], q, threshold),
+                center(coefficients[base + 3], q, threshold),
+            ];
+            for plane in out.chunks_exact_mut(width) {
+                for lane in 0..4 {
+                    plane[base + lane] = T::from_i128(i128::from(extract(
+                        &mut carries[lane],
+                        mask,
+                        half_b,
+                        b,
+                        log_basis,
+                    )));
+                }
+            }
+        }
+        for coefficient in bulk_end..width {
+            let mut carry = center(coefficients[coefficient], q, threshold);
+            for plane in out.chunks_exact_mut(width) {
+                plane[coefficient] =
+                    T::from_i128(i128::from(extract(&mut carry, mask, half_b, b, log_basis)));
+            }
+        }
+        return true;
+    }
+
     for base in (0..bulk_end).step_by(4) {
-        let mut carries = [
-            center(coefficients[base], q, threshold),
-            center(coefficients[base + 1], q, threshold),
-            center(coefficients[base + 2], q, threshold),
-            center(coefficients[base + 3], q, threshold),
-        ];
-        for plane in out.chunks_exact_mut(width) {
-            plane[base] = extract(&mut carries[0], mask, half_b, b, log_basis);
-            plane[base + 1] = extract(&mut carries[1], mask, half_b, b, log_basis);
-            plane[base + 2] = extract(&mut carries[2], mask, half_b, b, log_basis);
-            plane[base + 3] = extract(&mut carries[3], mask, half_b, b, log_basis);
+        let mut carries = [0i64; 4];
+        let first_digits: [i64; 4] = std::array::from_fn(|lane| {
+            let (carry, digit) = peel_first(
+                coefficients[base + lane],
+                q,
+                threshold,
+                mask,
+                half_b,
+                b,
+                log_basis,
+            );
+            carries[lane] = carry;
+            digit
+        });
+        for (level, plane) in out.chunks_exact_mut(width).enumerate() {
+            for lane in 0..4 {
+                let digit = if level == 0 {
+                    first_digits[lane]
+                } else {
+                    extract(&mut carries[lane], mask, half_b, b, log_basis)
+                };
+                plane[base + lane] = T::from_i128(i128::from(digit));
+            }
         }
     }
 
     for coefficient in bulk_end..width {
-        let mut carry = center(coefficients[coefficient], q, threshold);
-        for plane in out.chunks_exact_mut(width) {
-            plane[coefficient] = extract(&mut carry, mask, half_b, b, log_basis);
+        let (mut carry, first_digit) = peel_first(
+            coefficients[coefficient],
+            q,
+            threshold,
+            mask,
+            half_b,
+            b,
+            log_basis,
+        );
+        for (level, plane) in out.chunks_exact_mut(width).enumerate() {
+            let digit = if level == 0 {
+                first_digit
+            } else {
+                extract(&mut carry, mask, half_b, b, log_basis)
+            };
+            plane[coefficient] = T::from_i128(i128::from(digit));
         }
     }
     true
@@ -794,7 +1043,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
             .expect("Akita field element must fit in u128")
             + 1;
         let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
-        balanced_decompose_coefficients_pow2_signed_into_with_params(
+        balanced_decompose_coefficients_pow2_i16_into(
             &self.coeffs,
             out.as_flattened_mut(),
             &params,

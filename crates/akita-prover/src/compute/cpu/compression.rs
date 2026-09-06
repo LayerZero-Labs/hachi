@@ -1,9 +1,7 @@
 use super::prepared::validate_digit_row_request;
 use super::CpuBackend;
 use crate::compute::backend::{CompressionComputeBackend, CompressionRowsProducts};
-use crate::kernels::linear::{
-    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic, validate_compression_batch_shape,
-};
+use crate::kernels::linear::{mat_vec_mul_ntt_compression_i8, validate_compression_batch_shape};
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -24,11 +22,8 @@ where
         let total_ring_elements = prepared.expanded.shared_matrix.num_field_elements() / D;
         validate_digit_row_request(1, input_width, total_ring_elements)?;
         prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
-            let negacyclic = mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)?;
-            let cyclic = digit_vectors
-                .iter()
-                .map(|digits| mat_vec_mul_ntt_single_i8_cyclic(ntt, 1, input_width, digits, 1))
-                .collect::<Result<Vec<_>, _>>()?;
+            let (negacyclic, cyclic) =
+                mat_vec_mul_ntt_compression_i8(ntt, input_width, digit_vectors)?;
             Ok(negacyclic
                 .into_iter()
                 .zip(cyclic)

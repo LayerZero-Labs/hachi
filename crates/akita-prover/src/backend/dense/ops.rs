@@ -46,6 +46,7 @@ where
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
@@ -87,14 +88,21 @@ where
         multipliers: &SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
-        let position_weights = multipliers.materialize_position_rings::<D>()?;
-        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
-        Ok(
-            crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
-                self.fold_blocks_ring(&position_weights, num_positions_per_block),
-                &live_block_weights,
-            ),
-        )
+        multipliers.ensure_ring_dim::<D>()?;
+        let coeffs = self.ring_coeffs::<D>()?;
+        let num_live_blocks = coeffs.len().div_ceil(num_positions_per_block);
+        let folded = cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let start = block_idx * num_positions_per_block;
+                let end = (start + num_positions_per_block).min(coeffs.len());
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (position, ring) in coeffs[start..end].iter().enumerate() {
+                    multipliers.accumulate_position_product(position, ring, &mut acc)?;
+                }
+                Ok(acc)
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(folded, multipliers)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]

@@ -7,6 +7,7 @@ use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_digits_i8,
     mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    CenteredRhs,
 };
 use akita_error::AkitaError;
 use akita_types::{NttCacheKey, NttTransformDomain};
@@ -236,8 +237,7 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
                             1,
                             1,
                             &t_hat,
-                            &z_segment,
-                            3,
+                            CenteredRhs::new(&z_segment, 3),
                             3,
                         )
                     },

@@ -1,6 +1,7 @@
 use super::schoolbook_digit_mat_vec;
 use crate::kernels::linear::{
-    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic, validate_compression_batch_shape,
+    mat_vec_mul_ntt_compression_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    validate_compression_batch_shape,
 };
 use akita_algebra::CyclotomicRing;
 use akita_types::layout::FlatMatrix;
@@ -38,16 +39,21 @@ fn assert_compression_batch<F: Field + CanonicalEncoding + Ring, const D: usize>
 
     let actual_negacyclic = mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, column_count, &views, 1)
         .expect("compression batch rows");
+    let (paired_negacyclic, paired_cyclic) =
+        mat_vec_mul_ntt_compression_i8::<F, D>(&slot, column_count, &views)
+            .expect("paired compression rows");
     let expected_matrix = vec![matrix];
     let expected_negacyclic = schoolbook_digit_mat_vec::<F, D>(&expected_matrix, &digit_vectors);
     assert_eq!(actual_negacyclic, expected_negacyclic);
+    assert_eq!(paired_negacyclic, expected_negacyclic);
 
-    for digits in &digit_vectors {
+    for (digits, paired) in digit_vectors.iter().zip(paired_cyclic) {
         let actual_cyclic =
             mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, 1, column_count, digits, 1)
                 .expect("cyclic compression product");
         let expected_cyclic = schoolbook_cyclic_digit_product(&expected_matrix[0], digits);
         assert_eq!(actual_cyclic, vec![expected_cyclic]);
+        assert_eq!(paired, vec![expected_cyclic]);
     }
 }
 
@@ -86,8 +92,16 @@ fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
         .expect("compression NTT profile");
     let short = [[0i8; D]; 3];
     let full = [[0i8; D]; 4];
+    assert!(validate_compression_batch_shape::<D>(&[]).is_err());
     assert!(validate_compression_batch_shape(&[&short, &full]).is_err());
+    assert!(mat_vec_mul_ntt_compression_i8::<F, D>(&slot, 4, &[]).is_err());
+    assert!(mat_vec_mul_ntt_compression_i8::<F, D>(&slot, 3, &[&full]).is_err());
+    assert!(mat_vec_mul_ntt_compression_i8::<F, D>(&slot, 4, &[&short, &full]).is_err());
 
     let outside_binary = [[2i8; D]; 4];
     assert!(mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, 4, &[&outside_binary], 1).is_err());
+    assert!(mat_vec_mul_ntt_compression_i8::<F, D>(&slot, 4, &[&outside_binary]).is_err());
+
+    let too_wide = [[0i8; D]; 5];
+    assert!(mat_vec_mul_ntt_compression_i8::<F, D>(&slot, 5, &[&too_wide]).is_err());
 }

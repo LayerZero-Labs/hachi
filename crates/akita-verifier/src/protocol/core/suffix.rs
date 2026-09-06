@@ -21,15 +21,15 @@ pub(super) enum SuffixWitnessState<'a, F: Field> {
     TerminalT(Vec<u8>),
 }
 
-fn suffix_commitment_payloads<F, E>(
+fn suffix_commitment_payloads<F>(
     setup: &AkitaVerifierSetup<F>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
+    relation_geometry: &RelationWitnessGeometry,
     witness_commitment: &RingVec<F>,
 ) -> Result<Vec<RingVec<F>>, AkitaError>
 where
     F: Field,
-    E: ExtField<F>,
 {
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
     if let Some(setup_prefix_id) = lp.setup_prefix() {
@@ -45,22 +45,23 @@ where
         for row in &slot.commitment.rows {
             coeffs.extend_from_slice(row.coeffs());
         }
-        group_payloads.push(RingVec::from_coeffs(coeffs));
+        group_payloads.push(Some(RingVec::from_coeffs(coeffs)));
     }
-    group_payloads.push(RingVec::from_coeffs(witness_commitment.coeffs().to_vec()));
+    group_payloads.push(Some(RingVec::from_coeffs(
+        witness_commitment.coeffs().to_vec(),
+    )));
     if group_payloads.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidProof);
     }
 
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(lp, opening_batch, <E as ExtField<F>>::DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     let mut ordered = Vec::with_capacity(group_payloads.len());
     for (relation_group_index, group_index) in
         opening_batch.root_group_order()?.into_iter().enumerate()
     {
         let payload = group_payloads
-            .get(group_index)
+            .get_mut(group_index)
+            .and_then(Option::take)
             .ok_or(AkitaError::InvalidProof)?;
         if payload.coeff_len()
             != relation_layout
@@ -69,7 +70,7 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
-        ordered.push(payload.clone());
+        ordered.push(payload);
     }
     Ok(ordered)
 }
@@ -522,8 +523,9 @@ where
             )
         }
     };
+    let relation_geometry = RelationWitnessGeometry::for_level(lp, &opening_batch, E::DEGREE)?;
     let prefix = bind_opening_payload_and_finalize_claims(
-        lp,
+        &relation_geometry,
         &opening_batch,
         &opening_payload,
         claim_state,
@@ -534,13 +536,19 @@ where
         SuffixWitnessState::Commitment(commitment) => *commitment,
         SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
     };
-    let commitment_payloads =
-        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, current_commitment)?;
+    let commitment_payloads = suffix_commitment_payloads::<F>(
+        setup,
+        lp,
+        &opening_batch,
+        &relation_geometry,
+        current_commitment,
+    )?;
     Ok(PreparedFoldReplay {
         lp,
         level,
         opening_payload,
         opening_shape: opening_batch,
+        relation_geometry,
         commitment_payloads,
         prefix,
         w_len: witness_len,

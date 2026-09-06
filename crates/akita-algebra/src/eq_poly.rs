@@ -33,6 +33,13 @@ thread_local! {
 /// reachable code still needs an explicit allocation ceiling.
 pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 
+/// Evaluate one coordinate factor of the equality polynomial.
+#[inline(always)]
+pub(crate) fn eq_factor<E: Field>(x: E, y: E) -> E {
+    let xy = x * y;
+    E::one() - x - y + xy + xy
+}
+
 /// Utilities for the equality polynomial `eq(x, y) = Πᵢ (xᵢ yᵢ + (1 − xᵢ)(1 − yᵢ))`.
 pub struct EqPolynomial<E: Field>(PhantomData<E>);
 
@@ -102,7 +109,7 @@ impl<E: Field> EqPolynomial<E> {
         }
         Ok(x.iter()
             .zip(y.iter())
-            .map(|(&x_i, &y_i)| x_i * y_i + (E::one() - x_i) * (E::one() - y_i))
+            .map(|(&x_i, &y_i)| eq_factor(x_i, y_i))
             .fold(E::one(), |acc, v| acc * v))
     }
 
@@ -475,11 +482,40 @@ impl<E: Field> SplitEqEvals<E> {
 mod tests {
     use super::*;
     use crate::Field;
+    use jolt_field::solinas::{Ext2, Prime32Offset99};
     use jolt_field::{Fp64, One, Ring, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     type F = Fp64<4294967197>;
+
+    fn assert_eq_factor_identity<E: Field + std::fmt::Debug + PartialEq>(values: &[E]) {
+        for &x in values {
+            for &y in values {
+                let expected = x * y + (E::one() - x) * (E::one() - y);
+                assert_eq!(eq_factor(x, y), expected, "x={x:?}, y={y:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn equality_factor_matches_definition_over_base_and_extension_fields() {
+        let base_values = [
+            Prime32Offset99::zero(),
+            Prime32Offset99::one(),
+            Prime32Offset99::from_u64(2),
+            Prime32Offset99::from_i64(-7),
+        ];
+        assert_eq_factor_identity(&base_values);
+
+        let extension_values = [
+            Ext2::new(base_values[0], base_values[0]),
+            Ext2::new(base_values[1], base_values[0]),
+            Ext2::new(base_values[2], base_values[3]),
+            Ext2::new(base_values[3], base_values[2]),
+        ];
+        assert_eq_factor_identity(&extension_values);
+    }
 
     #[test]
     fn evals_matches_mle_pointwise() {

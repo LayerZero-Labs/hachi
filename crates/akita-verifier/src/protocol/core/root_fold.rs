@@ -117,6 +117,7 @@ where
         claims,
         &openings,
         opening_batch,
+        relation_geometry,
         stage3_sumcheck_proof,
         next_fold_level_params,
         next_witness_ring_dim,
@@ -152,6 +153,7 @@ fn verify_root_inner<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
+    relation_geometry: RelationWitnessGeometry,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
     next_fold_level_params: Option<&CommittedGroupParams>,
     next_witness_ring_dim: usize,
@@ -184,7 +186,7 @@ where
     let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::DEGREE)?;
     let opening_payload = proof.opening_payload.clone();
     let prefix = bind_opening_payload_and_finalize_claims(
-        root_lp,
+        &relation_geometry,
         opening_batch,
         &opening_payload,
         claim_material,
@@ -198,6 +200,7 @@ where
         level: 0,
         opening_payload,
         opening_shape: opening_batch.clone(),
+        relation_geometry,
         commitment_payloads,
         prefix,
         w_len: witness_len,

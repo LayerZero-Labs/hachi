@@ -439,6 +439,103 @@ fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
 }
 
 #[test]
+fn base_16_i16_specialization_matches_field_digit_oracle_at_boundaries() {
+    const LEVELS: usize = 8;
+    const LOG_BASIS: u32 = 16;
+    let q = (-F128::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
+    let threshold = decompose_centering_threshold(LEVELS, LOG_BASIS, q);
+    let i128_max = i128::MAX as u128;
+    let values = [
+        0,
+        1,
+        32_767,
+        32_768,
+        65_535,
+        threshold - 1,
+        threshold,
+        threshold + 1,
+        q - i128_max - 1,
+        q - i128_max,
+        q - 65_536,
+        q - 32_768,
+        q - 1,
+    ];
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| {
+        F128::from_u128_reduced(values[index % values.len()])
+    }));
+    let mut actual = vec![[0i16; D]; LEVELS];
+    ring.balanced_decompose_pow2_i16_into(&mut actual, LOG_BASIS);
+
+    let expected = ring.balanced_decompose_pow2(LEVELS, LOG_BASIS);
+    for (actual_plane, expected_plane) in actual.iter().zip(&expected) {
+        for (&actual_digit, expected_digit) in actual_plane.iter().zip(&expected_plane.coeffs) {
+            let canonical = expected_digit
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128");
+            let centered = if canonical > q / 2 {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+            assert_eq!(i128::from(actual_digit), centered);
+        }
+    }
+}
+
+#[test]
+fn fp64_native_i16_decomposition_handles_exact_width_negative_tail() {
+    let q = (-F64Wide::one())
+        .to_u128_checked()
+        .expect("Fp64 values fit in u128")
+        + 1;
+    let mut exercised_exact_width_tail = false;
+    for log_basis in [1, 6, 7, 8, 10, 11, 16] {
+        let levels = 64usize.div_ceil(log_basis as usize);
+        let threshold = decompose_centering_threshold(levels, log_basis, q);
+        exercised_exact_width_tail |= q - threshold > i64::MAX as u128;
+        let half_b = 1u128 << (log_basis - 1);
+        let values = [
+            0,
+            1,
+            half_b - 1,
+            half_b,
+            threshold.saturating_sub(1),
+            threshold,
+            threshold + 1,
+            q - i64::MAX as u128 - 1,
+            q - i64::MAX as u128,
+            q - (half_b << 1),
+            q - half_b,
+            q - 1,
+        ];
+        let ring = CyclotomicRing::<F64Wide, D>::from_coefficients(from_fn(|index| {
+            F64Wide::from_u128_reduced(values[index % values.len()])
+        }));
+        let mut actual = vec![[0i16; D]; levels];
+        ring.balanced_decompose_pow2_i16_into(&mut actual, log_basis);
+
+        let expected = ring.balanced_decompose_pow2(levels, log_basis);
+        for (actual_plane, expected_plane) in actual.iter().zip(&expected) {
+            for (&actual_digit, expected_digit) in actual_plane.iter().zip(&expected_plane.coeffs) {
+                let canonical = expected_digit
+                    .to_u128_checked()
+                    .expect("Fp64 values fit in u128");
+                let centered = if canonical > q / 2 {
+                    -((q - canonical) as i128)
+                } else {
+                    canonical as i128
+                };
+                assert_eq!(i128::from(actual_digit), centered, "log_basis={log_basis}");
+            }
+        }
+    }
+    assert!(exercised_exact_width_tail);
+}
+
+#[test]
 fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
     let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 4 {
         0 => F128::from_i64(-128),

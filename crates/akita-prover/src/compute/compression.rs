@@ -209,9 +209,7 @@ where
             ));
         }
         let quotient = quotient_from_products(&products.cyclic, &products.negacyclic)?;
-        let negacyclic_image = RingVec::from_ring_elems(&products.negacyclic)
-            .coeffs()
-            .to_vec();
+        let negacyclic_image = RingVec::from_ring_elems(&products.negacyclic).into_coeffs();
         if negacyclic_image.len() != first_map.output_coefficients() {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong image length".into(),

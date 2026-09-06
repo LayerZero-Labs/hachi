@@ -124,7 +124,12 @@ impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
         Ok(E::from_base_slice(self.fold_coordinates(idx)?))
     }
 
-    pub(super) fn accumulate_position_product<const D: usize>(
+    /// Add `position[idx] * rhs` to `output` without materializing the multiplier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a mismatched ring dimension or out-of-range index.
+    pub fn accumulate_position_product<const D: usize>(
         &self,
         idx: usize,
         rhs: &CyclotomicRing<F, D>,
