@@ -48,7 +48,7 @@ pub(in crate::protocol::core) struct FoldClaimMaterial<F: Field, E: Field> {
 }
 
 pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, T>(
-    lp: &CommittedGroupParams,
+    relation_geometry: &RelationWitnessGeometry,
     opening_shape: &OpeningClaimsLayout,
     opening_payload: &RingVec<F>,
     material: FoldClaimMaterial<F, E>,
@@ -60,9 +60,12 @@ where
     E: ExtField<F>,
     T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::DEGREE)?
-        .rhs_layout()
-        .opening_payload_geometry()?;
+    if relation_geometry.extension_degree() != E::DEGREE {
+        return Err(AkitaError::InvalidSetup(
+            "relation witness extension degree mismatch".into(),
+        ));
+    }
+    let geometry = relation_geometry.rhs_layout().opening_payload_geometry()?;
     if opening_payload.coeff_len() != geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
@@ -117,6 +120,8 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: Field, E: Field> 
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
     /// groups for multi-group roots).
     pub(in crate::protocol::core) opening_shape: OpeningClaimsLayout,
+    /// Canonical checked geometry shared by payload binding and fold replay.
+    pub(in crate::protocol::core) relation_geometry: RelationWitnessGeometry,
     /// Terminal F payloads in relation (final-first) group order.
     pub(in crate::protocol::core) commitment_payloads: Vec<RingVec<F>>,
     pub(in crate::protocol::core) prefix: FoldPrefix<F, E>,
@@ -386,12 +391,7 @@ where
     let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(prepared.lp, &opening_shape, E::DEGREE).map_err(
-            |error| {
-                AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
-            },
-        )?;
+    let relation_geometry = prepared.relation_geometry;
     let relation_rhs_layout = relation_geometry.rhs_layout();
     if commitment_payloads.len() != num_groups {
         return Err(AkitaError::InvalidInput(
