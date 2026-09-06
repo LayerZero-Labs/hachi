@@ -103,16 +103,6 @@ pub fn decompose_ring_interleaved_i16<F: Field + CanonicalEncoding, const D: usi
     num_digits: usize,
     p: &DecomposeParams,
 ) {
-    if try_balanced_decompose_coefficients_pow2_u64_into(
-        &ring.coeffs,
-        digit_buf[..num_digits].as_flattened_mut(),
-        num_digits,
-        p.log_basis,
-        p.q,
-        p.threshold,
-    ) {
-        return;
-    }
     let bulk_end = D - (D % 3);
     for base in (0..bulk_end).step_by(3) {
         let canonical = [
