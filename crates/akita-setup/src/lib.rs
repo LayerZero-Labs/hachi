@@ -807,6 +807,9 @@ mod tests {
                 let id = scheduled_setup_prefix(TEST_D, commitment_params)
                     .slot_id()
                     .expect("setup prefix group");
+                let mut requirements =
+                    SetupRequirements::from_catalog::<Cfg>(&schedules(), MAX_VARS, 1).unwrap();
+                requirements.prefix_slot_ids = vec![id.clone()];
                 let compression_plan = CompressionChainPlan::for_complete_source(
                     commitment_params.profile.outer.matrix.sis_modulus_profile(),
                     commitment_params.profile.outer.matrix.output_rank() * TEST_D,
@@ -861,13 +864,8 @@ mod tests {
                     .unwrap();
                 save_prover_setup::<TestF>(&setup, &schedules(), MAX_VARS, 1).unwrap();
 
-                let loaded = load_prover_setup::<TestF>(
-                    &schedules(),
-                    MAX_VARS,
-                    1,
-                    &SetupRequirements::from_catalog::<Cfg>(&schedules(), MAX_VARS, 1).unwrap(),
-                )
-                .unwrap();
+                let loaded =
+                    load_prover_setup::<TestF>(&schedules(), MAX_VARS, 1, &requirements).unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
