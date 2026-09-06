@@ -10,16 +10,19 @@ semantics.
 
 ## Current audit status
 
-As of 2026-09-04, slices 0 through 9 are present and re-audited in PR #466 at
-code-and-evidence head `04111dedf`, followed by documentation-only main merge
-`5fd356d0c`. The mode is bound, layouts omit both ordinary and compression
-quotients, shared residue algebra drives the prover and verifier, production
-proofs exercise eligible reduced suffixes, and the exact planner emits reduced
-generated rows. Cross-mode replay, small-field reduced EOR, reversed traversal,
-production-profile verifier phase timing, the bounded malformed-input matrix,
-serialized-proof agreement, and planner telemetry are complete. The generated
-catalogs and durable Book explanations are present. Aggregate base/head evidence
-belongs in the PR rather than a checked compatibility snapshot.
+As of 2026-09-06, slices 0 through 9 are present and re-audited in PR #466 at
+code-and-evidence head `a890d7bfb`. The audit includes the post-`04111dedf`
+planner relation-state simplification, schedule validation, witness-tail
+construction, prover/verifier plumbing, relation-phase evidence checks, and
+documentation guards. The mode is bound, layouts omit both ordinary and
+compression quotients, shared residue algebra drives the prover and verifier,
+production proofs exercise eligible reduced suffixes, and the exact planner
+emits reduced generated rows. Cross-mode replay, small-field reduced EOR,
+reversed traversal, production-profile verifier phase timing, the bounded
+malformed-input matrix, serialized-proof agreement, and final-head planner
+telemetry are complete. The generated catalogs and durable Book explanations
+are present. Aggregate base/head evidence belongs in the PR rather than a
+checked compatibility snapshot.
 
 This distinction is intentional: the protocol feature is implemented, while
 the record remains `active` until its stated validation and evidence gates are
@@ -144,9 +147,9 @@ acceptance. They MUST preserve the shared algebra oracle and verifier equation.
 
 PR [#466](https://github.com/LayerZero-Labs/akita/pull/466) replaces closed,
 unmerged PR #445. Review checkpoint `1d2800432` contained the 127-commit
-restack from merge base `26bdbac79`; the 2026-09-04 re-audit additionally
-covers evidence fix `04111dedf` and documentation-only main merge
-`5fd356d0c`.
+restack from merge base `26bdbac79`; the 2026-09-06 re-audit now covers every
+later implementation and evidence change through `a890d7bfb` against merge
+base `f9f7de87b`.
 
 PR #466 targets `main` directly. It is not an active stack on #448, #444, or
 #445, and those historical branch heads must not be used as its current
@@ -174,6 +177,9 @@ main @ f9f7de87b
   -> generated catalogs and Book harmonization
   -> relation-aware profile and planner evidence @ 04111dedf
   -> main documentation merge @ 5fd356d0c
+  -> planner/state and protocol-plumbing cleanup @ e7dde5b4c
+  -> rejection/doc-guard alignment @ bb68275e9
+  -> final review cleanup and phase-evidence regression @ a890d7bfb
   `-> final #466 audit record
 ```
 
