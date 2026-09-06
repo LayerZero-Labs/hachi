@@ -224,7 +224,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
 }
 
 #[test]
-fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
+fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
     let policy = policy_of::<Dense>();
     let main_group = PolynomialGroupLayout::singleton(14);
     let main_row = scalar_row(main_group).expect("scalar main row");
@@ -238,14 +238,43 @@ fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
     };
     let request = grouped_request::<Dense>(main_group, &key.precommitteds);
 
-    let error = find_adapted_schedule(
+    let adapted = find_adapted_schedule(
         &main_row,
         &request,
         honest_fold_policy_of::<Dense>(),
         &policy,
         Dense::ring_challenge_config,
     )
-    .expect_err("four large precommits need a different suffix depth");
+    .expect("guided search must materialize its frozen split directly");
+    assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
+}
+
+#[test]
+fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
+    let policy = policy_of::<OneHot>();
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
+        .expect("one-hot catalog");
+    let main_group = PolynomialGroupLayout::singleton(14);
+    let main_row = catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(main_group))
+        .expect("scalar main row");
+    let pre_profile = catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(44),
+        ))
+        .expect("very large scalar precommit row")
+        .profiles()
+        .final_group;
+    let request = grouped_request::<OneHot>(main_group, &[pre_profile; 4]);
+
+    let error = find_adapted_schedule(
+        main_row,
+        &request,
+        honest_fold_policy_of::<OneHot>(),
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .expect_err("four very large precommits cannot fit the frozen suffix");
     assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }
 

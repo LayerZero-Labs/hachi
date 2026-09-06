@@ -650,9 +650,7 @@ impl<'a> CandidateDomain<'a> {
                     ..
                 } if state.level < num_search_levels
             );
-        let fold_policy = if ctx.adaptation_guide.is_some() {
-            FoldCandidatePolicy::Best
-        } else if retain_split_frontier {
+        let fold_policy = if retain_split_frontier {
             FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled)
         } else {
             FoldCandidatePolicy::Best

@@ -381,20 +381,24 @@ impl RecursiveCandidateContext<'_, '_> {
             .opening
             .method()
             .physical_coefficient_width(policy.claim_ext_degree, request.dimensions.d_a())?;
-        let splits = recursive_split_search_domain(
-            policy.recursive_split_search_policy,
-            search.num_ring_elems,
-            search.reduced_vars,
-            delta_commit,
-            delta_open,
-            search.num_chunks,
-        );
+        let splits = if let Some(guide) = request.guide {
+            search
+                .reduced_vars
+                .checked_sub(guide.position_index_bits)
+                .filter(|&split| split > 0 && split < search.reduced_vars)
+                .into_iter()
+                .collect()
+        } else {
+            recursive_split_search_domain(
+                policy.recursive_split_search_policy,
+                search.num_ring_elems,
+                search.reduced_vars,
+                delta_commit,
+                delta_open,
+                search.num_chunks,
+            )
+        };
         for r in splits {
-            if request.guide.is_some_and(|guide| {
-                search.reduced_vars.checked_sub(r) != Some(guide.position_index_bits)
-            }) {
-                continue;
-            }
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: request.dimensions.d_a(),
